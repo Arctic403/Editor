@@ -45,7 +45,7 @@ body.theme-monokai {
 }
 /* #endregion */
 
-/* #region Global Resets */
+/* #region Global Resets & Layout Containment */
 * {
     box-sizing: border-box;
     margin: 0;
@@ -55,6 +55,7 @@ body.theme-monokai {
 body, html {
     height: 100%;
     width: 100%;
+    max-width: 100vw;
     overflow: hidden;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background-color: var(--bg-primary);
@@ -64,39 +65,49 @@ body, html {
 .hidden {
     display: none !important;
 }
-/* #endregion */
 
-/* #region Layout & Navigation */
 .app-container {
     display: flex;
     flex-direction: column;
     height: 100vh;
     width: 100vw;
+    max-width: 100vw;
+    overflow: hidden;
 }
+/* #endregion */
 
+/* #region Layout & Navigation */
 .app-header {
     background-color: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px 12px;
+    padding: 6px 8px;
+    flex-shrink: 0;
+    overflow: hidden;
 }
 
 .app-header h1 {
-    font-size: 1rem;
+    font-size: 0.9rem;
     font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 110px;
 }
 
 .header-controls {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
+    overflow-x: auto;
+    flex-shrink: 1;
 }
 
 .view-tabs {
     display: flex;
-    gap: 4px;
+    gap: 2px;
 }
 
 .page-view {
@@ -105,6 +116,8 @@ body, html {
     flex-direction: column;
     overflow: hidden;
     position: relative;
+    width: 100%;
+    max-width: 100vw;
 }
 
 .page-view.active {
@@ -112,19 +125,21 @@ body, html {
 }
 /* #endregion */
 
-/* #region Buttons & Controls */
+/* #region Compact Buttons & Controls */
 button, .btn {
     background-color: var(--bg-tertiary);
     color: var(--text-primary);
     border: 1px solid var(--border-color);
-    padding: 6px 10px;
+    padding: 4px 6px;
     border-radius: 4px;
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     cursor: pointer;
     text-decoration: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 button:hover, .btn:hover {
@@ -133,8 +148,8 @@ button:hover, .btn:hover {
 }
 
 .btn-sm {
-    padding: 4px 8px;
-    font-size: 0.8rem;
+    padding: 3px 5px;
+    font-size: 0.7rem;
 }
 
 .btn-success { background-color: rgba(78, 201, 176, 0.2); border-color: var(--success-color); }
@@ -145,9 +160,9 @@ button:hover, .btn:hover {
     background-color: var(--bg-tertiary);
     color: var(--text-primary);
     border: 1px solid var(--border-color);
-    padding: 6px 10px;
+    padding: 4px 6px;
     border-radius: 4px;
-    font-size: 0.85rem;
+    font-size: 0.75rem;
 }
 /* #endregion */
 
@@ -155,8 +170,9 @@ button:hover, .btn:hover {
 .config-panel {
     background-color: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
-    padding: 8px 12px;
-    font-size: 0.85rem;
+    padding: 6px 8px;
+    font-size: 0.8rem;
+    flex-shrink: 0;
 }
 
 .config-panel summary {
@@ -166,29 +182,30 @@ button:hover, .btn:hover {
 
 .config-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    margin-top: 8px;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    margin-top: 6px;
 }
 
 .input-group {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
 }
 
 .input-group label {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     color: var(--text-secondary);
 }
 
 .toolbar {
     background-color: var(--bg-secondary);
-    padding: 8px 12px;
+    padding: 6px 8px;
     display: flex;
-    gap: 8px;
+    gap: 4px;
     border-bottom: 1px solid var(--border-color);
     flex-wrap: wrap;
+    flex-shrink: 0;
 }
 
 .file-manager-section {
@@ -200,32 +217,34 @@ button:hover, .btn:hover {
 
 .fm-header {
     background-color: var(--bg-secondary);
-    padding: 6px 12px;
-    font-size: 0.8rem;
+    padding: 4px 8px;
+    font-size: 0.75rem;
     color: var(--text-secondary);
     display: flex;
     justify-content: space-between;
     border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
 }
 
 .file-tree {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    overflow-x: auto;
+    padding: 4px;
 }
 
 .tree-node {
-    margin-left: 10px;
+    margin-left: 8px;
 }
 
 .tree-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 4px 8px;
+    padding: 3px 6px;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
 }
 
 .tree-row:hover {
@@ -238,7 +257,7 @@ button:hover, .btn:hover {
 
 .delete-icon {
     color: var(--text-secondary);
-    padding: 2px 6px;
+    padding: 2px 4px;
     border-radius: 3px;
     cursor: pointer;
 }
@@ -249,28 +268,36 @@ button:hover, .btn:hover {
 }
 /* #endregion */
 
-/* #region Editor & Split Panes */
+/* #region Editor, Scrollbars & Split Panes */
 .editor-section {
     flex: 1;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    width: 100%;
+    max-width: 100vw;
 }
 
 .editor-header {
     background-color: var(--bg-secondary);
-    padding: 6px 12px;
+    padding: 4px 8px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+    overflow-x: auto;
 }
 
 .active-file-info {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 0.85rem;
+    gap: 6px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 30%;
 }
 
 .save-indicator.clean { color: var(--success-color); }
@@ -278,16 +305,21 @@ button:hover, .btn:hover {
 
 .editor-actions {
     display: flex;
-    gap: 4px;
+    gap: 3px;
     align-items: center;
+    overflow-x: auto;
+    flex-shrink: 1;
 }
 
 .breadcrumb-bar {
     background-color: var(--bg-primary);
-    padding: 4px 12px;
+    padding: 3px 8px;
     border-bottom: 1px solid var(--border-color);
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     color: var(--text-secondary);
+    white-space: nowrap;
+    overflow-x: auto;
+    flex-shrink: 0;
 }
 
 .breadcrumb-item {
@@ -300,21 +332,23 @@ button:hover, .btn:hover {
 
 .block-navigation-bar {
     background-color: var(--bg-secondary);
-    padding: 4px 12px;
+    padding: 3px 8px;
     border-bottom: 1px solid var(--border-color);
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     display: flex;
-    gap: 8px;
+    gap: 6px;
     overflow-x: auto;
     white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .block-nav-item {
     background: var(--bg-tertiary);
-    padding: 2px 6px;
+    padding: 2px 5px;
     border-radius: 3px;
     cursor: pointer;
     border: 1px solid var(--border-color);
+    flex-shrink: 0;
 }
 
 .no-blocks {
@@ -324,20 +358,25 @@ button:hover, .btn:hover {
 
 .search-bar {
     background-color: var(--bg-secondary);
-    padding: 8px 12px;
+    padding: 6px 8px;
     border-bottom: 1px solid var(--border-color);
     display: flex;
-    gap: 6px;
+    gap: 4px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
 }
 
 .search-bar input {
     flex: 1;
+    min-width: 100px;
 }
 
 .workspace-panes {
     flex: 1;
     display: flex;
     overflow: hidden;
+    width: 100%;
+    position: relative;
 }
 
 .editor-workspace {
@@ -346,6 +385,7 @@ button:hover, .btn:hover {
     position: relative;
     border-right: 1px solid var(--border-color);
     overflow: hidden;
+    min-width: 0;
 }
 
 .editor-workspace.pane-secondary {
@@ -354,32 +394,35 @@ button:hover, .btn:hover {
 
 .pane-header {
     background-color: var(--bg-secondary);
-    padding: 6px 12px;
+    padding: 4px 8px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     border-bottom: 1px solid var(--border-color);
-    font-size: 0.8rem;
+    font-size: 0.75rem;
+    flex-shrink: 0;
 }
 
 .line-numbers {
-    width: 45px;
+    width: 38px;
     background-color: var(--bg-secondary);
     color: var(--text-secondary);
     font-family: monospace;
-    font-size: 0.85rem;
-    padding: 10px 4px;
+    font-size: 0.75rem;
+    padding: 8px 2px;
     text-align: right;
     user-select: none;
     overflow: hidden;
-    line-height: 20px;
+    line-height: 18px;
+    flex-shrink: 0;
 }
 
 .editor-wrapper {
     flex: 1;
     position: relative;
-    overflow: hidden;
+    overflow: auto; /* Fixed to allow scrolling */
     display: flex;
+    background: transparent;
 }
 
 .editor-textarea {
@@ -388,15 +431,17 @@ button:hover, .btn:hover {
     color: transparent;
     caret-color: var(--text-primary);
     font-family: monospace;
-    font-size: 0.85rem;
-    padding: 10px;
+    font-size: 0.75rem;
+    padding: 8px;
     border: none;
     resize: none;
     outline: none;
     white-space: pre;
-    overflow: auto;
-    line-height: 20px;
+    overflow-x: auto;
+    overflow-y: auto;
+    line-height: 18px;
     z-index: 2;
+    min-width: 100%;
 }
 
 .highlight-layer {
@@ -405,13 +450,13 @@ button:hover, .btn:hover {
     left: 0;
     right: 0;
     bottom: 0;
-    padding: 10px;
+    padding: 8px;
     font-family: monospace;
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     white-space: pre;
     overflow: hidden;
     pointer-events: none;
-    line-height: 20px;
+    line-height: 18px;
     z-index: 1;
     margin: 0;
     background: transparent;
@@ -428,21 +473,25 @@ button:hover, .btn:hover {
     background-color: var(--bg-secondary);
     border-top: 1px solid var(--border-color);
     display: flex;
-    gap: 4px;
-    padding: 6px;
+    gap: 3px;
+    padding: 4px;
     overflow-x: auto;
     white-space: nowrap;
+    flex-shrink: 0;
+    -webkit-overflow-scrolling: touch;
 }
 
 .symbol-btn {
     background-color: var(--bg-tertiary);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
-    padding: 4px 10px;
-    border-radius: 4px;
+    padding: 3px 8px;
+    border-radius: 3px;
     font-family: monospace;
     font-weight: bold;
     cursor: pointer;
+    flex-shrink: 0;
+    font-size: 0.8rem;
 }
 
 .modal-overlay {
@@ -456,14 +505,14 @@ button:hover, .btn:hover {
     display: flex;
     justify-content: center;
     align-items: flex-start;
-    padding-top: 60px;
+    padding-top: 40px;
 }
 
 .modal-content {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    width: 90%;
-    max-width: 500px;
+    width: 95%;
+    max-width: 450px;
     border-radius: 6px;
     overflow: hidden;
     box-shadow: 0 4px 16px rgba(0,0,0,0.4);
@@ -472,7 +521,7 @@ button:hover, .btn:hover {
 }
 
 .modal-header {
-    padding: 10px 12px;
+    padding: 8px 10px;
     border-bottom: 1px solid var(--border-color);
     display: flex;
     justify-content: space-between;
@@ -480,7 +529,7 @@ button:hover, .btn:hover {
 }
 
 .modal-header h3 {
-    font-size: 0.95rem;
+    font-size: 0.85rem;
 }
 
 .modal-close {
@@ -488,26 +537,22 @@ button:hover, .btn:hover {
     color: var(--text-secondary);
 }
 
-.modal-close:hover {
-    color: var(--danger-color);
-}
-
 .modal-content input[type="text"] {
-    margin: 10px;
-    width: calc(100% - 20px);
+    margin: 8px;
+    width: calc(100% - 16px);
 }
 
 .quick-open-results {
-    max-height: 250px;
+    max-height: 200px;
     overflow-y: auto;
-    padding: 4px 10px 10px 10px;
+    padding: 4px 8px 8px 8px;
 }
 
 .quick-item {
-    padding: 6px 8px;
+    padding: 6px;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
 }
 
 .quick-item:hover {
