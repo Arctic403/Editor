@@ -19,3 +19,7 @@ button,.btn,.icon-btn{min-height:38px;border:1px solid var(--border);background:
 @media(min-width:701px){.mobile-only{display:none}.app-container{padding:8px;gap:8px}.app-header{border:1px solid var(--border);border-radius:8px;height:52px;padding:0 10px}.page-view.active{border:1px solid var(--border);border-radius:8px}.desktop-tree{display:block}.editor-section{border-radius:8px}}
 
 .tok-comment{color:#6a9955}.tok-string{color:#ce9178}.tok-keyword{color:#569cd6}
+
+
+/* Patched tab controls */
+.tab-wrap{display:flex;align-items:stretch;gap:1px;flex:none}.tab-wrap .editor-tab{border-radius:6px 0 0 6px}.tab-close{min-height:30px!important;min-width:28px!important;padding:3px 7px!important;border-radius:0 6px 6px 0!important;font-size:12px!important;background:var(--panel2)!important}.tab-close:hover{background:var(--danger)!important;color:#fff}.editor-tab.active+.tab-close{background:var(--accent)!important;color:#fff}
