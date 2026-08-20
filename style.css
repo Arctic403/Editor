@@ -12,6 +12,52 @@ html, body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
+/* Theme Switching Overrides */
+body.theme-light {
+    background: #ffffff;
+    color: #1e1e1e;
+}
+body.theme-light .app-header,
+body.theme-light .config-panel,
+body.theme-light .file-manager-section,
+body.theme-light .search-bar,
+body.theme-light .breadcrumb-bar,
+body.theme-light .pane-header,
+body.theme-light .accessory-keyboard-bar {
+    background: #f3f3f3;
+    border-color: #e0e0e0;
+    color: #1e1e1e;
+}
+body.theme-light .editor-section,
+body.theme-light .editor-workspace,
+body.theme-light .line-numbers {
+    background: #ffffff;
+    color: #232323;
+}
+body.theme-light .editor-textarea {
+    color: transparent;
+    caret-color: #000000;
+}
+
+body.theme-monokai {
+    background: #272822;
+    color: #f8f8f2;
+}
+body.theme-monokai .app-header,
+body.theme-monokai .config-panel,
+body.theme-monokai .file-manager-section,
+body.theme-monokai .pane-header,
+body.theme-monokai .accessory-keyboard-bar {
+    background: #1e1f1c;
+    border-color: #3e3d32;
+}
+body.theme-monokai .editor-section,
+body.theme-monokai .editor-workspace,
+body.theme-monokai .line-numbers {
+    background: #272822;
+    color: #90908a;
+}
+
 .app-container {
     display: flex;
     flex-direction: column;
@@ -29,6 +75,18 @@ html, body {
     padding: 8px 12px;
     border-radius: 6px;
     border: 1px solid #3c3c3c;
+}
+
+.header-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.theme-select {
+    width: auto !important;
+    padding: 4px 20px 4px 8px !important;
+    font-size: 0.75rem !important;
 }
 
 .app-header h1 {
@@ -87,6 +145,37 @@ html, body {
     border-radius: 0;
     border: none;
     height: 100vh;
+}
+
+/* Save Status Indicator Dot */
+.save-indicator {
+    font-size: 0.85rem;
+    margin-right: 4px;
+    transition: color 0.2s ease;
+}
+.save-indicator.clean { color: #858585; }
+.save-indicator.dirty { color: #e5c07b; }
+
+/* Breadcrumb Directory Path Bar */
+.breadcrumb-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: #252526;
+    border-bottom: 1px solid #333;
+    font-size: 0.75rem;
+    overflow-x: auto;
+    white-space: nowrap;
+}
+
+.breadcrumb-item {
+    color: #007acc;
+    cursor: pointer;
+}
+
+.breadcrumb-separator {
+    color: #666;
 }
 
 /* Config Accordion */
@@ -348,13 +437,39 @@ select.config-select option {
     padding: 6px;
 }
 
-/* Dual-Layer Workspace Layout */
+/* Dual Split Panes Container */
+.workspace-panes {
+    flex: 1;
+    display: flex;
+    position: relative;
+    overflow: hidden;
+}
+
 .editor-workspace {
     flex: 1;
     display: flex;
     position: relative;
     overflow: hidden;
     background: #1e1e1e;
+}
+
+.editor-workspace.pane-secondary {
+    border-left: 1px solid #3c3c3c;
+    flex-direction: column;
+}
+
+.editor-workspace.hidden { 
+    display: none !important; 
+}
+
+.pane-header {
+    background: #252526;
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #3c3c3c;
 }
 
 .line-numbers {
@@ -400,19 +515,19 @@ select.config-select option {
 
 /* Background Highlight Render Layer */
 .highlight-layer {
-    color: transparent;
     pointer-events: none;
     overflow: hidden;
     z-index: 1;
+    background: transparent !important;
 }
 
 /* Foreground Editable Input Layer */
 .editor-textarea {
     background: transparent;
-    color: #d4d4d4;
+    color: transparent;
+    caret-color: #ffffff;
     resize: none;
     z-index: 2;
-    caret-color: #ffffff;
     overflow-x: auto;
     overflow-y: auto;
 }
@@ -424,3 +539,77 @@ mark.search-highlight {
     border: 1px solid #f1c40f;
     border-radius: 2px;
 }
+
+/* Accessory Symbol Keyboard Bar */
+.accessory-keyboard-bar {
+    display: flex;
+    gap: 4px;
+    padding: 6px;
+    background: #252526;
+    border-top: 1px solid #3c3c3c;
+    overflow-x: auto;
+    white-space: nowrap;
+}
+
+.symbol-btn {
+    background: #3c3c3c;
+    color: #ffffff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-family: monospace;
+    font-weight: bold;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.symbol-btn:active { background: #0e639c; }
+
+/* Quick Open Modal Window */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding-top: 40px;
+    z-index: 999;
+}
+.modal-overlay.hidden { display: none !important; }
+
+.modal-content {
+    background: #252526;
+    border: 1px solid #3c3c3c;
+    border-radius: 6px;
+    width: 90%;
+    max-width: 500px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.modal-header h3 { margin: 0; font-size: 0.95rem; color: #fff; }
+.modal-close { cursor: pointer; font-size: 1rem; color: #aaa; }
+
+.quick-open-results {
+    max-height: 250px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.quick-item {
+    padding: 8px;
+    background: #3c3c3c;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+.quick-item:hover { background: #0e639c; color: #fff; }
