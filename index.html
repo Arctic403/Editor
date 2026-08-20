@@ -1,31 +1,162 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#1e1e1e">
-<title>Mobile Workspace Editor</title>
-<link rel="stylesheet" href="style.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Workspace Editor</title>
+    <link rel="stylesheet" href="app.css">
+    <!-- JSZip for Exporting Workspace -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Prism.js for Syntax Highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" id="prismTheme">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
 </head>
 <body>
-<div class="app-container" id="appContainer">
-<header class="app-header" id="appHeader"><h1>Mobile Workspace</h1><div class="header-controls"><select id="themeSelect" class="config-select theme-select"><option value="dark">Dark</option><option value="light">Light</option><option value="monokai">Monokai</option></select><div class="view-tabs"><button class="tab-btn active" id="tabExplorer">📁 Explorer</button><button class="tab-btn" id="tabEditor">📝 Editor</button></div></div></header>
-<main class="page-view active" id="explorerView">
-<details class="config-panel"><summary>⚙️ GitHub Settings</summary><div class="config-grid"><div class="input-group"><label>Personal Access Token</label><input type="password" id="tokenInput" autocomplete="off" placeholder="GitHub token"></div><button class="btn btn-secondary" id="connectGhBtn">Connect GitHub</button><div class="input-group"><label>Repository</label><select id="repoSelect" class="config-select"><option value="">-- Connect Token First --</option></select></div><div class="input-group"><label>Branch</label><select id="branchSelect" class="config-select"><option value="">-- Choose Branch --</option></select></div></div></details>
-<div class="toolbar"><button class="btn btn-success" id="newFileBtn">＋ New File</button><label class="btn btn-secondary">📥 Import<input type="file" id="uploadInput" webkitdirectory directory multiple hidden></label><button class="btn btn-warning" id="exportWorkspaceBtn">📦 Download ZIP</button><button class="btn btn-secondary" id="pushAllGitHubBtn">☁️ Push All</button></div>
-<section class="file-manager-section"><div class="fm-header"><span>Workspace Directory</span><span id="itemCount">0 files</span></div><div class="file-tree" id="fileTree"></div></section>
-</main>
-<main class="page-view" id="editorView"><section class="editor-section" id="editorSection">
-<div class="editor-header"><div class="active-file-info"><span id="saveIndicator" class="save-indicator clean">○</span><span id="activeFileLabel">No file selected</span></div><div class="editor-actions"><button class="btn btn-sm btn-secondary" id="quickOpenBtn">🔍 Find File</button><button class="btn btn-sm btn-secondary" id="splitPaneBtn">▥ Split</button><button class="btn btn-sm btn-secondary" id="jumpLineBtn">⚓ Jump</button><button class="btn btn-sm btn-secondary" id="searchToggleBtn">🔎 Find/Replace</button><button class="btn btn-sm btn-success" id="saveLocalBtn">💾 Save</button><button class="btn btn-sm btn-secondary" id="pushGitHubBtn">☁️ Push</button><button class="btn btn-sm btn-secondary" id="fullscreenBtn">⛶ Fullscreen</button><button class="btn btn-sm btn-danger" id="closeFileBtn">✕</button></div></div>
-<div class="breadcrumb-bar" id="breadcrumbBar"><span class="breadcrumb-item">Workspace</span></div><div class="block-navigation-bar" id="blockNav">No defined #region blocks</div>
-<div class="search-bar hidden" id="searchReplaceBar"><input id="searchInput" placeholder="Find text..."><input id="replaceInput" placeholder="Replace with..."><button class="btn btn-sm" id="findNextBtn">Find Next</button><button class="btn btn-sm btn-warning" id="replaceBtn">Replace</button><button class="btn btn-sm btn-warning" id="replaceAllBtn">All</button></div>
-<div class="workspace-panes" id="workspacePanes"><div class="editor-workspace pane-primary"><div class="line-numbers" id="lineNumbers">1</div><div class="editor-wrapper"><pre class="highlight-layer" id="highlightLayer"><code id="highlightCode"></code></pre><textarea id="editor" class="editor-textarea" spellcheck="false" autocomplete="off" placeholder="Select or create a file..."></textarea></div></div><div class="editor-workspace pane-secondary hidden" id="secondaryPane"><div class="pane-header"><span id="secondaryPaneTitle">Secondary View</span><button class="btn btn-sm btn-danger" id="closeSplitBtn">✕</button></div><div class="editor-wrapper"><pre class="highlight-layer"><code id="secondaryHighlightCode"></code></pre><textarea id="secondaryEditorView" class="editor-textarea" readonly></textarea></div></div></div>
-<div class="accessory-keyboard-bar" id="symbolBar"></div>
-</section></main></div>
-<div class="modal-overlay hidden" id="quickOpenModal"><div class="modal-content"><div class="modal-header"><h3>Quick Open File</h3><button class="modal-close" id="closeQuickOpenModal">✕</button></div><input id="quickOpenInput" placeholder="Type a file name or path..."><div class="quick-open-results" id="quickOpenResults"></div></div></div>
-<script src="app.js"></script>
-</body></html>
+    <div class="app-container" id="appContainer">
+        <!-- App Header & Navigation -->
+        <header class="app-header" id="appHeader">
+            <h1>Mobile Workspace</h1>
+            <div class="header-controls">
+                <select id="themeSelect" class="config-select theme-select">
+                    <option value="dark">Dark Theme</option>
+                    <option value="light">Light Theme</option>
+                    <option value="monokai">Monokai Theme</option>
+                </select>
+                <div class="view-tabs">
+                    <button class="tab-btn active" id="tabExplorer">📁 Explorer</button>
+                    <button class="tab-btn" id="tabEditor">📝 Editor</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- EXPLORER PAGE VIEW -->
+        <main class="page-view active" id="explorerView">
+            <details class="config-panel" id="configPanel">
+                <summary>⚙️ GitHub Settings & Config</summary>
+                <div class="config-grid">
+                    <div class="input-group">
+                        <label>Personal Access Token (PAT):</label>
+                        <input type="password" id="tokenInput" placeholder="ghp_xxxxxxxxxxxx">
+                    </div>
+                    <button class="btn btn-secondary" id="connectGhBtn">Connect GitHub</button>
+                    <div class="input-group">
+                        <label>Repository:</label>
+                        <select id="repoSelect" class="config-select">
+                            <option value="">-- Connect Token First --</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Branch:</label>
+                        <select id="branchSelect" class="config-select">
+                            <option value="">-- Choose Branch --</option>
+                        </select>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Explorer Actions Toolbar -->
+            <div class="toolbar" id="appToolbar">
+                <button class="btn btn-success" id="newFileBtn">+ New File</button>
+                <label class="btn btn-secondary">
+                    📥 Upload / Import
+                    <input type="file" id="uploadInput" webkitdirectory directory multiple style="display: none;">
+                </label>
+                <button class="btn btn-warning" id="exportWorkspaceBtn">📦 Export ZIP</button>
+                <button class="btn btn-secondary" id="pushAllGitHubBtn">☁️ Push All</button>
+            </div>
+
+            <!-- File Manager Tree Window -->
+            <section class="file-manager-section" id="explorerSection">
+                <div class="fm-header">
+                    <span>Workspace Directory</span>
+                    <span id="itemCount">0 items</span>
+                </div>
+                <div class="file-tree" id="fileTree"></div>
+            </section>
+        </main>
+
+        <!-- EDITOR PAGE VIEW -->
+        <main class="page-view" id="editorView">
+            <section class="editor-section" id="editorSection">
+                <div class="editor-header">
+                    <div class="active-file-info">
+                        <span id="saveIndicator" class="save-indicator clean" title="Saved">●</span>
+                        <span id="activeFileLabel">No file selected</span>
+                    </div>
+                    <div class="editor-actions">
+                        <button class="btn btn-sm btn-secondary" id="quickOpenBtn">🔍 Find File</button>
+                        <button class="btn btn-sm btn-secondary" id="splitPaneBtn">▥ Split</button>
+                        <button class="btn btn-sm btn-secondary" id="jumpLineBtn">⚓ Jump L#</button>
+                        <button class="btn btn-sm btn-secondary" id="searchToggleBtn">🔍 Find/Replace</button>
+                        <button class="btn btn-sm btn-success" id="saveLocalBtn">💾 Save</button>
+                        <button class="btn btn-sm btn-secondary" id="pushGitHubBtn">☁️ Push</button>
+                        <button class="btn btn-sm btn-secondary" id="fullscreenBtn">⛶ Fullscreen</button>
+                        <button class="btn btn-sm btn-danger" id="closeFileBtn">✕</button>
+                    </div>
+                </div>
+
+                <!-- Breadcrumb Directory Path Bar -->
+                <div class="breadcrumb-bar" id="breadcrumbBar">
+                    <span class="breadcrumb-item">workspace</span>
+                </div>
+
+                <!-- Region Code Navigation Bar -->
+                <div class="block-navigation-bar" id="blockNav">
+                    <span class="no-blocks">No defined #region blocks</span>
+                </div>
+
+                <!-- Search and Replace Control Bar -->
+                <div class="search-bar hidden" id="searchReplaceBar">
+                    <input type="text" id="searchInput" placeholder="Find text...">
+                    <input type="text" id="replaceInput" placeholder="Replace with...">
+                    <button class="btn btn-sm btn-secondary" id="findNextBtn">Find Next</button>
+                    <button class="btn btn-sm btn-warning" id="replaceBtn">Replace</button>
+                    <button class="btn btn-sm btn-warning" id="replaceAllBtn">All</button>
+                </div>
+
+                <!-- Dual Pane Workspace Container -->
+                <div class="workspace-panes" id="workspacePanes">
+                    <!-- Pane 1 (Primary Editor) -->
+                    <div class="editor-workspace pane-primary">
+                        <div class="line-numbers" id="lineNumbers">1</div>
+                        <div class="editor-wrapper">
+                            <pre class="highlight-layer" id="highlightLayer"><code id="highlightCode"></code></pre>
+                            <textarea id="editor" class="editor-textarea" spellcheck="false" autocomplete="off" placeholder="Select or create a file to start editing..."></textarea>
+                        </div>
+                    </div>
+
+                    <!-- Pane 2 (Secondary Split Editor - Initially Hidden) -->
+                    <div class="editor-workspace pane-secondary hidden" id="secondaryPane">
+                        <div class="pane-header">
+                            <span id="secondaryPaneTitle">Secondary View</span>
+                            <button class="btn btn-sm btn-danger" id="closeSplitBtn">✕</button>
+                        </div>
+                        <div class="editor-wrapper">
+                            <pre class="highlight-layer" id="secondaryHighlightLayer"><code id="secondaryHighlightCode"></code></pre>
+                            <textarea id="secondaryEditorView" class="editor-textarea" spellcheck="false" autocomplete="off" readonly></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Mobile Programming Symbol Key Bar -->
+                <div class="accessory-keyboard-bar" id="symbolBar"></div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Quick File Search Modal (Ctrl/Cmd + P) -->
+    <div class="modal-overlay hidden" id="quickOpenModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Quick Open File</h3>
+                <span class="modal-close" id="closeQuickOpenModal">✕</span>
+            </div>
+            <input type="text" id="quickOpenInput" placeholder="Type file name or path..." autocomplete="off">
+            <div class="quick-open-results" id="quickOpenResults"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
