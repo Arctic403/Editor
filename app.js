@@ -74,46 +74,60 @@ document.getElementById("newFileBtn").onclick = function () {
 };
 
 // ---------------------------
-// Upload File or ZIP
+// Upload File or ZIP (iOS Safe)
 // ---------------------------
 document.getElementById("uploadInput").onchange = async function (event) {
     const files = event.target.files;
+    if (!files || files.length === 0) return;
 
     for (const file of files) {
         if (file.name.toLowerCase().endsWith(".zip")) {
-            await unpackZip(file);
+            await unpackZipIOS(file);
         } else {
             await importRegularFile(file);
         }
     }
 
     loadFiles();
+    // Reset file input for repeated uploads
+    event.target.value = "";
 };
 
 async function importRegularFile(file) {
-    const reader = new FileReader();
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
         reader.onload = function () {
             const tx = db.transaction("files", "readwrite");
             const store = tx.objectStore("files");
             store.put({ name: file.name, content: reader.result });
             tx.oncomplete = resolve;
         };
+        reader.onerror = reject;
         reader.readAsText(file);
     });
 }
 
 // ---------------------------
-// Handle ZIP file (FIXED)
+// iOS Safari Compatible ZIP Handler
 // ---------------------------
-async function unpackZip(zipFile) {
+function readFileAsArrayBuffer(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+async function unpackZipIOS(zipFile) {
     try {
         if (typeof JSZip === "undefined") {
-            throw new Error("JSZip library failed to load. Check your CDN script tag in index.html.");
+            throw new Error("JSZip script failed to load. Check your internet connection.");
         }
 
-        const arrayBuffer = await zipFile.arrayBuffer();
-        const zip = await JSZip.loadAsync(arrayBuffer);
+        // iOS Safari workaround: Use FileReader explicitly
+        const buffer = await readFileAsArrayBuffer(zipFile);
+        const zip = await JSZip.loadAsync(buffer);
 
         const extractedFiles = [];
 
@@ -142,20 +156,18 @@ async function unpackZip(zipFile) {
         const tx = db.transaction("files", "readwrite");
         const store = tx.objectStore("files");
 
-        for (const fileItem of extractedFiles) {
-            store.put(fileItem);
+        for (const item of extractedFiles) {
+            store.put(item);
         }
 
         return new Promise((resolve, reject) => {
-            tx.oncomplete = () => {
-                resolve();
-            };
+            tx.oncomplete = () => resolve();
             tx.onerror = (err) => reject(err);
         });
 
     } catch (err) {
-        console.error("ZIP unpack error details:", err);
-        alert("Failed to unpack ZIP: " + err.message);
+        console.error("iOS ZIP error:", err);
+        alert("Failed to unpack ZIP on iOS: " + err.message);
     }
 }
 
