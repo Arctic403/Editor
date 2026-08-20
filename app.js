@@ -1,28 +1,44 @@
-// Universal Text Extension Regex
 const TEXT_EXTENSIONS_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|html|htm|md|xml|cfg|ini|lua|py|cpp|c|h|hpp|cs|java|go|rs|php|rb|sh|bat|ps1|sql|yaml|yml|toml|env|gitignore|properties|log)$/i;
 
-// ---------------------------
-// IndexedDB Setup
-// ---------------------------
 let db;
-const request = indexedDB.open("LocalWorkspaceDB", 3);
 
-request.onupgradeneeded = function (event) {
-    db = event.target.result;
-    if (!db.objectStoreNames.contains("files")) {
-        db.createObjectStore("files", { keyPath: "name" });
+// Safe Event Listener Assignment (iOS Safari Compatible)
+function bindClick(id, handler) {
+    const element = document.getElementById(id);
+    if (element) {
+        element.addEventListener("click", handler);
+        element.addEventListener("touchend", function (e) {
+            e.preventDefault();
+            handler(e);
+        }, { passive: false });
     }
-};
-
-request.onsuccess = function (event) {
-    db = event.target.result;
-    loadFiles();
-    restoreSettings();
-};
+}
 
 // ---------------------------
-// LocalStorage Settings
+// Initialize App
 // ---------------------------
+document.addEventListener("DOMContentLoaded", function () {
+    initDatabase();
+    bindUIEvents();
+});
+
+function initDatabase() {
+    const request = indexedDB.open("LocalWorkspaceDB", 3);
+
+    request.onupgradeneeded = function (event) {
+        db = event.target.result;
+        if (!db.objectStoreNames.contains("files")) {
+            db.createObjectStore("files", { keyPath: "name" });
+        }
+    };
+
+    request.onsuccess = function (event) {
+        db = event.target.result;
+        loadFiles();
+        restoreSettings();
+    };
+}
+
 function restoreSettings() {
     document.getElementById("tokenInput").value = localStorage.getItem("gh_token") || "";
     document.getElementById("repoInput").value = localStorage.getItem("gh_repo") || "";
@@ -34,9 +50,156 @@ document.getElementById("repoInput").addEventListener("input", e => localStorage
 document.getElementById("branchInput").addEventListener("input", e => localStorage.setItem("gh_branch", e.target.value.trim()));
 
 // ---------------------------
-// File Tree Manager Logic
+// UI Control Event Bindings
+// ---------------------------
+function bindUIEvents() {
+    const editor = document.getElementById("editor");
+    const lineNumbers = document.getElementById("lineNumbers");
+
+    // Line Numbers Sync
+    editor.addEventListener("input", updateLineNumbers);
+    editor.addEventListener("scroll", function () {
+        lineNumbers.scrollTop = editor.scrollTop;
+    });
+
+    // Close File
+    bindClick("closeFileBtn", function () {
+        editor.value = "";
+        editor.dataset.filename = "";
+        document.getElementById("activeFileLabel").textContent = "No file selected";
+        updateLineNumbers();
+    });
+
+    // Toggle Search Bar
+    bindClick("searchToggleBtn", function () {
+        const bar = document.getElementById("searchReplaceBar");
+        bar.classList.toggle("hidden");
+    });
+
+    // Toggle Fullscreen
+    bindClick("fullscreenBtn", function () {
+        const appContainer = document.getElementById("appContainer");
+        const isFullscreen = appContainer.classList.toggle("fullscreen");
+        document.getElementById("fullscreenBtn").textContent = isFullscreen ? "⛶ Exit" : "⛶ Fullscreen";
+    });
+
+    // Replace Single Match
+    bindClick("replaceBtn", function () {
+        const searchVal = document.getElementById("searchInput").value;
+        const replaceVal = document.getElementById("replaceInput").value;
+        if (!searchVal) return;
+
+        editor.value = editor.value.replace(searchVal, replaceVal);
+        updateLineNumbers();
+    });
+
+    // Replace All Matches
+    bindClick("replaceAllBtn", function () {
+        const searchVal = document.getElementById("searchInput").value;
+        const replaceVal = document.getElementById("replaceInput").value;
+        if (!searchVal) return;
+
+        const regex = new RegExp(escapeRegExp(searchVal), "g");
+        editor.value = editor.value.replace(regex, replaceVal);
+        updateLineNumbers();
+    });
+
+    // Save File
+    bindClick("saveLocalBtn", function () {
+        const name = editor.dataset.filename;
+        if (!name) return alert("Select a file first.");
+
+        const content = editor.value;
+        const tx = db.transaction("files", "readwrite");
+        const store = tx.objectStore("files");
+        store.put({ name, content });
+
+        tx.oncomplete = () => alert("Saved!");
+    });
+
+    // New File
+    bindClick("newFileBtn", function () {
+        const name = prompt("Enter file path (e.g., src/index.js):");
+        if (!name) return;
+
+        const tx = db.transaction("files", "readwrite");
+        const store = tx.objectStore("files");
+        store.put({ name, content: "" });
+
+        tx.oncomplete = () => {
+            loadFiles();
+            openFile(name);
+        };
+    });
+
+    // Push Single
+    bindClick("pushGitHubBtn", async function () {
+        const token = document.getElementById("tokenInput").value.trim();
+        const repo = document.getElementById("repoInput").value.trim();
+        const branch = document.getElementById("branchInput").value.trim();
+        const name = editor.dataset.filename;
+        const content = editor.value;
+
+        if (!token || !repo || !name) return alert("Select a file & fill GitHub credentials.");
+
+        try {
+            await pushFileToGitHub(name, content, token, repo, branch);
+            alert(`Pushed ${name}!`);
+        } catch (err) {
+            alert("Push failed: " + err.message);
+        }
+    });
+
+    // Push All
+    bindClick("pushAllGitHubBtn", async function () {
+        const token = document.getElementById("tokenInput").value.trim();
+        const repo = document.getElementById("repoInput").value.trim();
+        const branch = document.getElementById("branchInput").value.trim();
+
+        if (!token || !repo) return alert("Fill GitHub credentials.");
+
+        const tx = db.transaction("files", "readonly");
+        const store = tx.objectStore("files");
+        const req = store.getAll();
+
+        req.onsuccess = async function () {
+            const files = req.result;
+            if (files.length === 0) return alert("No files to push.");
+
+            let success = 0;
+            for (const file of files) {
+                try {
+                    await pushFileToGitHub(file.name, file.content, token, repo, branch);
+                    success++;
+                } catch (err) {
+                    console.error(err);
+                }
+            }
+            alert(`Pushed ${success} of ${files.length} files!`);
+        };
+    });
+}
+
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function updateLineNumbers() {
+    const editor = document.getElementById("editor");
+    const lineNumbers = document.getElementById("lineNumbers");
+    const lines = editor.value.split("\n").length;
+    let numbersArr = [];
+    for (let i = 1; i <= lines; i++) {
+        numbersArr.push(i);
+    }
+    lineNumbers.textContent = numbersArr.join("\n");
+}
+
+// ---------------------------
+// File Tree Logic
 // ---------------------------
 function loadFiles() {
+    if (!db) return;
     const tx = db.transaction("files", "readonly");
     const store = tx.objectStore("files");
     const req = store.getAll();
@@ -84,9 +247,9 @@ function renderTree(node, container) {
             else if (["py", "cpp", "c", "h", "cs", "java", "rs", "go"].includes(ext)) icon = "⚙️";
 
             treeNode.innerHTML = `
-                <div class="tree-row" onclick="openFile('${item.fullPath}')">
-                    <span class="tree-label">${icon} ${key}</span>
-                    <span class="delete-icon" onclick="event.stopPropagation(); deleteFile('${item.fullPath}')">✕</span>
+                <div class="tree-row">
+                    <span class="tree-label" onclick="openFile('${item.fullPath}')">${icon} ${key}</span>
+                    <span class="delete-icon" onclick="deleteFile('${item.fullPath}')">✕</span>
                 </div>
             `;
         } else {
@@ -119,22 +282,8 @@ function toggleFolder(rowElement) {
 }
 
 // ---------------------------
-// File Import Operations (Chrome & Safari Fixed)
+// File Import
 // ---------------------------
-document.getElementById("newFileBtn").onclick = function () {
-    const name = prompt("Enter file path (e.g., src/index.js):");
-    if (!name) return;
-
-    const tx = db.transaction("files", "readwrite");
-    const store = tx.objectStore("files");
-    store.put({ name, content: "" });
-
-    tx.oncomplete = () => {
-        loadFiles();
-        openFile(name);
-    };
-};
-
 document.getElementById("uploadInput").onchange = async function (event) {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -221,31 +370,15 @@ async function unpackZip(zipFile) {
 }
 
 // ---------------------------
-// File Editor & Controls
+// File Operations
 // ---------------------------
-const editor = document.getElementById("editor");
-const lineNumbers = document.getElementById("lineNumbers");
-
-function updateLineNumbers() {
-    const lines = editor.value.split("\n").length;
-    let numbersArr = [];
-    for (let i = 1; i <= lines; i++) {
-        numbersArr.push(i);
-    }
-    lineNumbers.textContent = numbersArr.join("\n");
-}
-
-editor.addEventListener("input", updateLineNumbers);
-editor.addEventListener("scroll", () => {
-    lineNumbers.scrollTop = editor.scrollTop;
-});
-
 function openFile(name) {
     const tx = db.transaction("files", "readonly");
     const store = tx.objectStore("files");
     const req = store.get(name);
 
     req.onsuccess = function () {
+        const editor = document.getElementById("editor");
         editor.value = req.result.content;
         editor.dataset.filename = name;
         document.getElementById("activeFileLabel").textContent = "Editing: " + name;
@@ -259,64 +392,19 @@ function deleteFile(name) {
     const store = tx.objectStore("files");
     store.delete(name);
     tx.oncomplete = () => {
+        const editor = document.getElementById("editor");
         if (editor.dataset.filename === name) {
-            closeActiveFile();
+            editor.value = "";
+            editor.dataset.filename = "";
+            document.getElementById("activeFileLabel").textContent = "No file selected";
+            updateLineNumbers();
         }
         loadFiles();
     };
 }
 
-function closeActiveFile() {
-    editor.value = "";
-    editor.dataset.filename = "";
-    document.getElementById("activeFileLabel").textContent = "No file selected";
-    updateLineNumbers();
-}
-
-document.getElementById("closeFileBtn").onclick = closeActiveFile;
-
-document.getElementById("saveLocalBtn").onclick = function () {
-    const name = editor.dataset.filename;
-    if (!name) return alert("Select a file first.");
-
-    const content = editor.value;
-    const tx = db.transaction("files", "readwrite");
-    const store = tx.objectStore("files");
-    store.put({ name, content });
-
-    tx.oncomplete = () => alert("Saved!");
-};
-
-// Fullscreen Toggle
-document.getElementById("fullscreenBtn").onclick = function () {
-    const appContainer = document.getElementById("appContainer");
-    appContainer.classList.toggle("fullscreen");
-    this.textContent = appContainer.classList.contains("fullscreen") ? "⛶ Exit" : "⛶ Fullscreen";
-};
-
-// Search & Replace Toggle
-document.getElementById("searchToggleBtn").onclick = function () {
-    document.getElementById("searchReplaceBar").classList.toggle("hidden");
-};
-
-document.getElementById("replaceBtn").onclick = function () {
-    const searchVal = document.getElementById("searchInput").value;
-    const replaceVal = document.getElementById("replaceInput").value;
-    if (!searchVal) return;
-    editor.value = editor.value.replace(searchVal, replaceVal);
-    updateLineNumbers();
-};
-
-document.getElementById("replaceAllBtn").onclick = function () {
-    const searchVal = document.getElementById("searchInput").value;
-    const replaceVal = document.getElementById("replaceInput").value;
-    if (!searchVal) return;
-    editor.value = editor.value.replaceAll(searchVal, replaceVal);
-    updateLineNumbers();
-};
-
 // ---------------------------
-// GitHub Push Operations
+// GitHub Push
 // ---------------------------
 async function pushFileToGitHub(name, content, token, repo, branch) {
     const url = `https://api.github.com/repos/${repo}/contents/${name}`;
@@ -351,48 +439,3 @@ async function pushFileToGitHub(name, content, token, repo, branch) {
         throw new Error(errData.message || res.status);
     }
 }
-
-document.getElementById("pushGitHubBtn").onclick = async function () {
-    const token = document.getElementById("tokenInput").value.trim();
-    const repo = document.getElementById("repoInput").value.trim();
-    const branch = document.getElementById("branchInput").value.trim();
-    const name = editor.dataset.filename;
-    const content = editor.value;
-
-    if (!token || !repo || !name) return alert("Select a file & fill GitHub credentials.");
-
-    try {
-        await pushFileToGitHub(name, content, token, repo, branch);
-        alert(`Pushed ${name}!`);
-    } catch (err) {
-        alert("Push failed: " + err.message);
-    }
-};
-
-document.getElementById("pushAllGitHubBtn").onclick = async function () {
-    const token = document.getElementById("tokenInput").value.trim();
-    const repo = document.getElementById("repoInput").value.trim();
-    const branch = document.getElementById("branchInput").value.trim();
-
-    if (!token || !repo) return alert("Fill GitHub credentials.");
-
-    const tx = db.transaction("files", "readonly");
-    const store = tx.objectStore("files");
-    const req = store.getAll();
-
-    req.onsuccess = async function () {
-        const files = req.result;
-        if (files.length === 0) return alert("No files to push.");
-
-        let success = 0;
-        for (const file of files) {
-            try {
-                await pushFileToGitHub(file.name, file.content, token, repo, branch);
-                success++;
-            } catch (err) {
-                console.error(err);
-            }
-        }
-        alert(`Pushed ${success} of ${files.length} files!`);
-    };
-};
