@@ -3,15 +3,13 @@
     -webkit-tap-highlight-color: transparent;
 }
 
-body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+html, body {
+    height: 100%;
     margin: 0;
     padding: 0;
     background: #1e1e1e;
     color: #cccccc;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
 .app-container {
@@ -22,15 +20,22 @@ body {
     gap: 10px;
 }
 
-.app-container.fullscreen #explorerSection,
-.app-container.fullscreen .config-panel,
-.app-container.fullscreen .toolbar,
-.app-container.fullscreen .app-header {
+/* iOS Safari Fullscreen Toggle Rules */
+.app-container.fullscreen {
+    padding: 0 !important;
+}
+
+.app-container.fullscreen #appHeader,
+.app-container.fullscreen #configPanel,
+.app-container.fullscreen #appToolbar,
+.app-container.fullscreen #explorerSection {
     display: none !important;
 }
 
-.app-container.fullscreen {
-    padding: 0;
+.app-container.fullscreen #editorSection {
+    border-radius: 0;
+    border: none;
+    height: 100vh;
 }
 
 .app-header h1 {
@@ -94,13 +99,18 @@ input[type="text"], input[type="password"] {
     font-weight: bold;
     text-align: center;
     cursor: pointer;
+    user-select: none;
+}
+
+.btn:active {
+    opacity: 0.8;
 }
 
 .btn-secondary { background: #3c3c3c; }
 .btn-warning { background: #b89500; }
 .btn-success { background: #16825d; }
 .btn-danger { background: #a12626; }
-.btn-sm { flex: initial; padding: 4px 8px; font-size: 0.75rem; }
+.btn-sm { flex: initial; padding: 6px 10px; font-size: 0.75rem; }
 
 /* File Manager Window */
 .file-manager-section {
@@ -109,7 +119,7 @@ input[type="text"], input[type="password"] {
     border-radius: 6px;
     display: flex;
     flex-direction: column;
-    max-height: 200px;
+    max-height: 180px;
     overflow: hidden;
 }
 
@@ -134,7 +144,7 @@ input[type="text"], input[type="password"] {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 4px 8px;
+    padding: 6px 8px;
     font-size: 0.85rem;
     cursor: pointer;
 }
@@ -157,8 +167,8 @@ input[type="text"], input[type="password"] {
 
 .delete-icon {
     color: #f48771;
-    font-size: 0.8rem;
-    padding: 2px 6px;
+    font-size: 0.85rem;
+    padding: 4px 8px;
 }
 
 /* Editor Section */
@@ -186,6 +196,7 @@ input[type="text"], input[type="password"] {
 .editor-actions {
     display: flex;
     gap: 4px;
+    flex-shrink: 0;
 }
 
 .search-bar {
@@ -196,12 +207,14 @@ input[type="text"], input[type="password"] {
     border-bottom: 1px solid #3c3c3c;
 }
 
-.search-bar.hidden { display: none; }
+.search-bar.hidden { 
+    display: none !important; 
+}
 
 .search-bar input {
     flex: 1;
     font-size: 0.75rem;
-    padding: 4px 6px;
+    padding: 6px;
 }
 
 .editor-workspace {
@@ -213,7 +226,7 @@ input[type="text"], input[type="password"] {
 }
 
 .line-numbers {
-    width: 35px;
+    width: 38px;
     padding: 10px 4px;
     font-family: Consolas, "Courier New", monospace;
     font-size: 0.85rem;
