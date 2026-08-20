@@ -81,12 +81,12 @@
             <section class="editor-section" id="editorSection">
                 <div class="editor-header">
                     <div class="active-file-info">
-                        <span id="saveStatusIndicator" class="save-indicator clean" title="Saved">●</span>
+                        <span id="saveIndicator" class="save-indicator clean" title="Saved">●</span>
                         <span id="activeFileLabel">No file selected</span>
                     </div>
                     <div class="editor-actions">
                         <button class="btn btn-sm btn-secondary" id="quickOpenBtn">🔍 Find File</button>
-                        <button class="btn btn-sm btn-secondary" id="splitViewBtn">📂 Split View</button>
+                        <button class="btn btn-sm btn-secondary" id="splitPaneBtn">▥ Split</button>
                         <button class="btn btn-sm btn-secondary" id="jumpLineBtn">⚓ Jump L#</button>
                         <button class="btn btn-sm btn-secondary" id="searchToggleBtn">🔍 Find/Replace</button>
                         <button class="btn btn-sm btn-success" id="saveLocalBtn">💾 Save</button>
@@ -127,33 +127,20 @@
                     </div>
 
                     <!-- Pane 2 (Secondary Split Editor - Initially Hidden) -->
-                    <div class="editor-workspace pane-secondary hidden" id="secondaryWorkspace">
+                    <div class="editor-workspace pane-secondary hidden" id="secondaryPane">
                         <div class="pane-header">
-                            <span id="secondaryFileLabel">Secondary View</span>
+                            <span id="secondaryPaneTitle">Secondary View</span>
                             <button class="btn btn-sm btn-danger" id="closeSplitBtn">✕</button>
                         </div>
                         <div class="editor-wrapper">
                             <pre class="highlight-layer" id="secondaryHighlightLayer"><code id="secondaryHighlightCode"></code></pre>
-                            <textarea id="secondaryEditor" class="editor-textarea" spellcheck="false" autocomplete="off" readonly></textarea>
+                            <textarea id="secondaryEditorView" class="editor-textarea" spellcheck="false" autocomplete="off" readonly></textarea>
                         </div>
                     </div>
                 </div>
 
                 <!-- Mobile Programming Symbol Key Bar -->
-                <div class="accessory-keyboard-bar">
-                    <button class="symbol-btn" onclick="insertSymbol('{')">{</button>
-                    <button class="symbol-btn" onclick="insertSymbol('}')">}</button>
-                    <button class="symbol-btn" onclick="insertSymbol('[')">[</button>
-                    <button class="symbol-btn" onclick="insertSymbol(']')">]</button>
-                    <button class="symbol-btn" onclick="insertSymbol('(')">(</button>
-                    <button class="symbol-btn" onclick="insertSymbol(')')">)</button>
-                    <button class="symbol-btn" onclick="insertSymbol(';')">;</button>
-                    <button class="symbol-btn" onclick="insertSymbol('=>')">=></button>
-                    <button class="symbol-btn" onclick="insertSymbol('\"')">"</button>
-                    <button class="symbol-btn" onclick="insertSymbol('\'')">'</button>
-                    <button class="symbol-btn" onclick="insertSymbol('=`')">`</button>
-                    <button class="symbol-btn" onclick="insertSymbol('    ')">Tab</button>
-                </div>
+                <div class="accessory-keyboard-bar" id="symbolBar"></div>
             </section>
         </main>
     </div>
