@@ -4,6 +4,7 @@ const EXTENSION_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|ht
 
 let db;
 let lastSearchIndex = 0;
+let selectedFolderPath = ""; // Track currently targeted folder for imports/creation
 // #endregion
 
 // #region Helper Utilities
@@ -58,6 +59,18 @@ function escapeHtml(text) {
 function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+// Tab View Navigation Manager
+function switchTab(viewName) {
+    document.querySelectorAll('.page-view').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+    const targetView = document.getElementById(viewName + 'View');
+    const targetTab = document.getElementById('tab' + viewName.charAt(0).toUpperCase() + viewName.slice(1));
+
+    if (targetView) targetView.classList.add('active');
+    if (targetTab) targetTab.classList.add('active');
+}
 // #endregion
 
 // #region Application Initialization
@@ -85,15 +98,20 @@ function initDatabase() {
 }
 
 function restoreSettings() {
-    const token = localStorage.getItem("gh_token") || "";
-    document.getElementById("tokenInput").value = token;
-    
-    if (token) {
-        fetchGitHubRepos(token);
+    const tokenInput = document.getElementById("tokenInput");
+    if (tokenInput) {
+        const token = localStorage.getItem("gh_token") || "";
+        tokenInput.value = token;
+        if (token) {
+            fetchGitHubRepos(token);
+        }
     }
 }
 
-document.getElementById("tokenInput").addEventListener("input", e => localStorage.setItem("gh_token", e.target.value.trim()));
+const tokenInputEl = document.getElementById("tokenInput");
+if (tokenInputEl) {
+    tokenInputEl.addEventListener("input", e => localStorage.setItem("gh_token", e.target.value.trim()));
+}
 // #endregion
 
 // #region GitHub API Integration
@@ -129,6 +147,7 @@ function bindGitHubEvents() {
 
 async function fetchGitHubRepos(token) {
     const repoSelect = document.getElementById("repoSelect");
+    if (!repoSelect) return;
     repoSelect.innerHTML = '<option value="">Loading repositories...</option>';
 
     try {
@@ -164,6 +183,7 @@ async function fetchGitHubRepos(token) {
 
 async function fetchGitHubBranches(token, repo) {
     const branchSelect = document.getElementById("branchSelect");
+    if (!branchSelect) return;
     branchSelect.innerHTML = '<option value="">Loading branches...</option>';
 
     try {
@@ -195,7 +215,8 @@ async function fetchGitHubBranches(token, repo) {
 }
 
 async function importRepoFromGitHub(token, repo) {
-    const branch = document.getElementById("branchSelect").value || "main";
+    const branchSelect = document.getElementById("branchSelect");
+    const branch = (branchSelect && branchSelect.value) ? branchSelect.value : "main";
     try {
         const res = await fetch(`https://api.github.com/repos/${repo}/git/trees/${branch}?recursive=1`, {
             headers: {
@@ -312,6 +333,7 @@ function renderCodeBlockNav(content) {
 
 function jumpToLine(lineNumber) {
     const editor = document.getElementById("editor");
+    if (!editor) return;
     const lineHeight = 20; // Matches editor CSS line-height
     editor.scrollTop = (lineNumber - 1) * lineHeight;
     editor.focus();
@@ -325,42 +347,48 @@ function bindUIEvents() {
     const lineNumbers = document.getElementById("lineNumbers");
     const searchInput = document.getElementById("searchInput");
 
-    // Sync input changes across Line Numbers, Background Highlights, Block Nav & Auto-Save
-    editor.addEventListener("input", function () {
-        updateLineNumbers();
-        updateHighlights();
-        renderCodeBlockNav(this.value);
-        autoSaveCurrentFile();
-    });
+    // Tab Switchers
+    bindClick("tabExplorer", () => switchTab('explorer'));
+    bindClick("tabEditor", () => switchTab('editor'));
 
-    // Code Editor Shortcuts: Support Tab indentation & Save hotkey
-    editor.addEventListener("keydown", function (e) {
-        if (e.key === "Tab") {
-            e.preventDefault();
-            const start = this.selectionStart;
-            const end = this.selectionEnd;
-
-            this.value = this.value.substring(0, start) + "    " + this.value.substring(end);
-            this.selectionStart = this.selectionEnd = start + 4;
+    if (editor) {
+        // Sync input changes across Line Numbers, Background Highlights, Block Nav & Auto-Save
+        editor.addEventListener("input", function () {
             updateLineNumbers();
             updateHighlights();
             renderCodeBlockNav(this.value);
-        }
+            autoSaveCurrentFile();
+        });
 
-        if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-            e.preventDefault();
-            saveCurrentFile();
-        }
-    });
+        // Code Editor Shortcuts: Support Tab indentation & Save hotkey
+        editor.addEventListener("keydown", function (e) {
+            if (e.key === "Tab") {
+                e.preventDefault();
+                const start = this.selectionStart;
+                const end = this.selectionEnd;
 
-    // Sync horizontal/vertical scrolling across all three layers
-    editor.addEventListener("scroll", function () {
-        lineNumbers.scrollTop = editor.scrollTop;
-        if (highlightLayer) {
-            highlightLayer.scrollTop = editor.scrollTop;
-            highlightLayer.scrollLeft = editor.scrollLeft;
-        }
-    });
+                this.value = this.value.substring(0, start) + "    " + this.value.substring(end);
+                this.selectionStart = this.selectionEnd = start + 4;
+                updateLineNumbers();
+                updateHighlights();
+                renderCodeBlockNav(this.value);
+            }
+
+            if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+                e.preventDefault();
+                saveCurrentFile(true);
+            }
+        });
+
+        // Sync horizontal/vertical scrolling across all three layers
+        editor.addEventListener("scroll", function () {
+            if (lineNumbers) lineNumbers.scrollTop = editor.scrollTop;
+            if (highlightLayer) {
+                highlightLayer.scrollTop = editor.scrollTop;
+                highlightLayer.scrollLeft = editor.scrollLeft;
+            }
+        });
+    }
 
     // Live update search highlights as you type in search field
     if (searchInput) {
@@ -368,9 +396,11 @@ function bindUIEvents() {
     }
 
     bindClick("closeFileBtn", function () {
+        if (!editor) return;
         editor.value = "";
         editor.dataset.filename = "";
-        document.getElementById("activeFileLabel").textContent = "No file selected";
+        const label = document.getElementById("activeFileLabel");
+        if (label) label.textContent = "No file selected";
         updateLineNumbers();
         updateHighlights();
         renderCodeBlockNav("");
@@ -378,20 +408,22 @@ function bindUIEvents() {
 
     bindClick("searchToggleBtn", function () {
         const bar = document.getElementById("searchReplaceBar");
-        bar.classList.toggle("hidden");
+        if (bar) bar.classList.toggle("hidden");
         updateHighlights();
     });
 
     bindClick("fullscreenBtn", function () {
         const appContainer = document.getElementById("appContainer");
         const isFullscreen = appContainer.classList.toggle("fullscreen");
-        document.getElementById("fullscreenBtn").textContent = isFullscreen ? "⛶ Exit" : "⛶ Fullscreen";
+        const btn = document.getElementById("fullscreenBtn");
+        if (btn) btn.textContent = isFullscreen ? "⛶ Exit" : "⛶ Fullscreen";
     });
 
     // WORKING FIND & HIGHLIGHT FUNCTIONALITY
     bindClick("findNextBtn", function () {
         const searchVal = document.getElementById("searchInput").value;
         if (!searchVal) return alert("Enter text to find.");
+        if (!editor) return;
 
         const text = editor.value;
         const lowerText = text.toLowerCase();
@@ -428,6 +460,7 @@ function bindUIEvents() {
         const replaceVal = document.getElementById("replaceInput").value;
 
         if (!searchVal) return alert("Enter text to find.");
+        if (!editor) return;
 
         const text = editor.value;
         if (!text.includes(searchVal)) {
@@ -449,6 +482,7 @@ function bindUIEvents() {
         const replaceVal = document.getElementById("replaceInput").value;
 
         if (!searchVal) return alert("Enter text to find.");
+        if (!editor) return;
 
         const regex = new RegExp(escapeRegExp(searchVal), "g");
         const matches = (editor.value.match(regex) || []).length;
@@ -472,21 +506,26 @@ function bindUIEvents() {
     });
 
     bindClick("newFileBtn", function () {
-        const name = prompt("Enter file path (e.g., src/components/App.tsx):");
-        if (!name) return;
+        const defaultPath = selectedFolderPath ? `${selectedFolderPath}/` : "";
+        const name = prompt("Enter file path:", defaultPath);
+        if (!name || name.trim() === "" || name.endsWith("/")) return;
 
-        saveFileToDb(name, "").then(() => {
+        saveFileToDb(name.trim(), "").then(() => {
             loadFiles();
-            openFile(name);
+            openFile(name.trim());
         });
     });
 
     bindClick("pushGitHubBtn", async function () {
-        const token = document.getElementById("tokenInput").value.trim();
-        const repo = document.getElementById("repoSelect").value;
-        const branch = document.getElementById("branchSelect").value;
-        const name = editor.dataset.filename;
-        const content = editor.value;
+        const tokenInput = document.getElementById("tokenInput");
+        const repoSelect = document.getElementById("repoSelect");
+        const branchSelect = document.getElementById("branchSelect");
+
+        const token = tokenInput ? tokenInput.value.trim() : "";
+        const repo = repoSelect ? repoSelect.value : "";
+        const branch = branchSelect ? branchSelect.value : "";
+        const name = editor ? editor.dataset.filename : "";
+        const content = editor ? editor.value : "";
 
         if (!token || !repo || !name) return alert("Select a file & specify GitHub credentials.");
 
@@ -499,9 +538,13 @@ function bindUIEvents() {
     });
 
     bindClick("pushAllGitHubBtn", async function () {
-        const token = document.getElementById("tokenInput").value.trim();
-        const repo = document.getElementById("repoSelect").value;
-        const branch = document.getElementById("branchSelect").value;
+        const tokenInput = document.getElementById("tokenInput");
+        const repoSelect = document.getElementById("repoSelect");
+        const branchSelect = document.getElementById("branchSelect");
+
+        const token = tokenInput ? tokenInput.value.trim() : "";
+        const repo = repoSelect ? repoSelect.value : "";
+        const branch = branchSelect ? branchSelect.value : "";
 
         if (!token || !repo) return alert("Configure GitHub credentials first.");
 
@@ -529,6 +572,7 @@ function bindUIEvents() {
 
 function saveCurrentFile(showAlert = false) {
     const editor = document.getElementById("editor");
+    if (!editor) return;
     const name = editor.dataset.filename;
     if (!name) {
         if (showAlert) alert("Select a file first.");
@@ -551,6 +595,8 @@ function autoSaveCurrentFile() {
 function updateLineNumbers() {
     const editor = document.getElementById("editor");
     const lineNumbers = document.getElementById("lineNumbers");
+    if (!editor || !lineNumbers) return;
+
     const lines = editor.value.split("\n").length;
     let numbersArr = [];
     for (let i = 1; i <= lines; i++) {
@@ -565,7 +611,7 @@ function updateHighlights() {
     const searchInput = document.getElementById("searchInput");
     const searchBar = document.getElementById("searchReplaceBar");
 
-    if (!highlightLayer) return;
+    if (!editor || !highlightLayer) return;
 
     let text = editor.value;
     
@@ -599,12 +645,15 @@ function loadFiles() {
 
     req.onsuccess = function () {
         const files = req.result;
-        document.getElementById("itemCount").textContent = `${files.length} items`;
+        const itemCount = document.getElementById("itemCount");
+        if (itemCount) itemCount.textContent = `${files.length} items`;
         
         const treeRoot = buildFileTreeStructure(files);
         const container = document.getElementById("fileTree");
-        container.innerHTML = "";
-        renderTree(treeRoot, container, "");
+        if (container) {
+            container.innerHTML = "";
+            renderTree(treeRoot, container, "");
+        }
     };
 }
 
@@ -643,28 +692,66 @@ function renderTree(node, container, currentFolderPath) {
             else if (["sql", "db"].includes(ext)) icon = "🗄️";
 
             treeNode.innerHTML = `
-                <div class="tree-row">
+                <div class="tree-row" draggable="true" data-path="${item.fullPath}">
                     <span class="tree-label" onclick="openFile('${item.fullPath}')">${icon} ${key}</span>
                     <span class="delete-icon" onclick="deleteFile('${item.fullPath}')">✕</span>
                 </div>
             `;
+
+            const row = treeNode.querySelector('.tree-row');
+            row.ondragstart = (e) => {
+                e.dataTransfer.setData("text/plain", item.fullPath);
+            };
         } else {
             const folderPath = currentFolderPath ? `${currentFolderPath}/${key}` : key;
             const childrenContainer = document.createElement("div");
             childrenContainer.className = "tree-children";
             childrenContainer.style.display = "none";
 
+            const isSelected = selectedFolderPath === folderPath;
+
             treeNode.innerHTML = `
-                <div class="tree-row">
-                    <span class="tree-label" onclick="toggleFolder(this)">📁 <strong>${key}</strong></span>
+                <div class="tree-row ${isSelected ? 'selected-folder' : ''}" data-folder="${folderPath}">
+                    <span class="tree-label" onclick="selectFolder(this, '${folderPath}')">📁 <strong>${key}</strong></span>
                     <span class="delete-icon" title="Delete Folder" onclick="deleteFolder('${folderPath}')">🗑️</span>
                 </div>
             `;
+
+            const row = treeNode.querySelector('.tree-row');
+
+            row.ondragover = (e) => {
+                e.preventDefault();
+                row.classList.add('drag-over');
+            };
+
+            row.ondragleave = () => {
+                row.classList.remove('drag-over');
+            };
+
+            row.ondrop = async (e) => {
+                e.preventDefault();
+                row.classList.remove('drag-over');
+                const sourcePath = e.dataTransfer.getData("text/plain");
+                if (sourcePath) {
+                    await moveFileToFolder(sourcePath, folderPath);
+                }
+            };
+
             renderTree(item._children, childrenContainer, folderPath);
             treeNode.appendChild(childrenContainer);
         }
         container.appendChild(treeNode);
     }
+}
+
+function selectFolder(labelElement, folderPath) {
+    if (selectedFolderPath === folderPath) {
+        selectedFolderPath = "";
+    } else {
+        selectedFolderPath = folderPath;
+    }
+    toggleFolder(labelElement);
+    loadFiles();
 }
 
 function toggleFolder(labelElement) {
@@ -676,26 +763,58 @@ function toggleFolder(labelElement) {
         labelElement.innerHTML = labelElement.innerHTML.replace(isHidden ? "📁" : "📂", isHidden ? "📂" : "📁");
     }
 }
+
+async function moveFileToFolder(filePath, targetFolderPath) {
+    const fileName = filePath.split('/').pop();
+    const newPath = `${targetFolderPath}/${fileName}`;
+    if (filePath === newPath) return;
+
+    const tx = db.transaction("files", "readwrite");
+    const store = tx.objectStore("files");
+    const req = store.get(filePath);
+
+    req.onsuccess = function() {
+        if (req.result) {
+            const content = req.result.content;
+            store.delete(filePath);
+            store.put({ name: newPath, content });
+        }
+    };
+
+    tx.oncomplete = () => {
+        const editor = document.getElementById("editor");
+        if (editor && editor.dataset.filename === filePath) {
+            editor.dataset.filename = newPath;
+            const label = document.getElementById("activeFileLabel");
+            if (label) label.textContent = "Editing: " + newPath;
+        }
+        loadFiles();
+    };
+}
 // #endregion
 
 // #region Multi-Format File Import Logic
-document.getElementById("uploadInput").onchange = async function (event) {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
+const uploadInputEl = document.getElementById("uploadInput");
+if (uploadInputEl) {
+    uploadInputEl.onchange = async function (event) {
+        const files = event.target.files;
+        if (!files || files.length === 0) return;
 
-    for (const file of files) {
-        if (file.name.toLowerCase().endsWith(".zip")) {
-            await unpackZip(file);
-        } else {
-            await importRegularFile(file);
+        for (const file of files) {
+            if (file.name.toLowerCase().endsWith(".zip")) {
+                await unpackZip(file);
+            } else {
+                await importRegularFile(file);
+            }
         }
-    }
 
-    loadFiles();
-    event.target.value = "";
-};
+        loadFiles();
+        event.target.value = "";
+    };
+}
 
 async function importRegularFile(file) {
+    const destPath = selectedFolderPath ? `${selectedFolderPath}/${file.name}` : file.name;
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = function () {
@@ -703,11 +822,11 @@ async function importRegularFile(file) {
             if (typeof content !== "string" || !isTextContent(content)) {
                 const base64Reader = new FileReader();
                 base64Reader.onload = function () {
-                    saveFileToDb(file.name, base64Reader.result).then(resolve);
+                    saveFileToDb(destPath, base64Reader.result).then(resolve);
                 };
                 base64Reader.readAsDataURL(file);
             } else {
-                saveFileToDb(file.name, content).then(resolve);
+                saveFileToDb(destPath, content).then(resolve);
             }
         };
         reader.onerror = reject;
@@ -761,7 +880,8 @@ async function unpackZip(zipFile) {
                 }
             }
 
-            extractedFiles.push({ name: entry.name, content });
+            const targetPath = selectedFolderPath ? `${selectedFolderPath}/${entry.name}` : entry.name;
+            extractedFiles.push({ name: targetPath, content });
         }
 
         const tx = db.transaction("files", "readwrite");
@@ -789,6 +909,8 @@ function openFile(name) {
 
     req.onsuccess = function () {
         const editor = document.getElementById("editor");
+        if (!editor) return;
+
         let rawContent = req.result ? req.result.content : "";
 
         if (typeof rawContent === "string" && rawContent.startsWith("data:application/octet-stream;base64,")) {
@@ -797,11 +919,16 @@ function openFile(name) {
 
         editor.value = rawContent;
         editor.dataset.filename = name;
-        document.getElementById("activeFileLabel").textContent = "Editing: " + name;
+        const label = document.getElementById("activeFileLabel");
+        if (label) label.textContent = "Editing: " + name;
+
         lastSearchIndex = 0;
         updateLineNumbers();
         updateHighlights();
         renderCodeBlockNav(rawContent);
+
+        // Automatically switch to editor view when opening a file
+        switchTab('editor');
     };
 }
 
@@ -812,10 +939,11 @@ function deleteFile(name) {
     store.delete(name);
     tx.oncomplete = () => {
         const editor = document.getElementById("editor");
-        if (editor.dataset.filename === name) {
+        if (editor && editor.dataset.filename === name) {
             editor.value = "";
             editor.dataset.filename = "";
-            document.getElementById("activeFileLabel").textContent = "No file selected";
+            const label = document.getElementById("activeFileLabel");
+            if (label) label.textContent = "No file selected";
             updateLineNumbers();
             updateHighlights();
             renderCodeBlockNav("");
@@ -839,15 +967,17 @@ function deleteFolder(folderPath) {
         keys.forEach(key => {
             if (key === folderPath || key.startsWith(prefix)) {
                 store.delete(key);
-                if (editor.dataset.filename === key) {
+                if (editor && editor.dataset.filename === key) {
                     editor.value = "";
                     editor.dataset.filename = "";
-                    document.getElementById("activeFileLabel").textContent = "No file selected";
+                    const label = document.getElementById("activeFileLabel");
+                    if (label) label.textContent = "No file selected";
                 }
             }
         });
 
         tx.oncomplete = () => {
+            if (selectedFolderPath === folderPath) selectedFolderPath = "";
             updateLineNumbers();
             updateHighlights();
             renderCodeBlockNav("");
