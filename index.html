@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Local Workspace + GitHub Push</title>
     <link rel="stylesheet" href="style.css">
 
-    <!-- JSZip for ZIP extraction -->
-    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <!-- iOS Compatible JSZip CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
 
@@ -38,7 +38,7 @@
     <div id="fileControls">
         <button id="newFileBtn" class="btn">New File</button>
         <label for="uploadInput" class="btn btn-secondary">Upload Files / ZIP</label>
-        <input type="file" id="uploadInput" multiple style="display: none;">
+        <input type="file" id="uploadInput" multiple accept=".zip,*/*" style="display: none;">
     </div>
 
     <ul id="fileList"></ul>
@@ -47,7 +47,7 @@
 
     <h2>Editor</h2>
     <div id="activeFileLabel">No file selected</div>
-    <textarea id="editor" placeholder="Select or create a file to start editing..."></textarea>
+    <textarea id="editor" placeholder="Select or create a file to start editing..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
 
     <div id="editorControls">
         <button id="saveLocalBtn" class="btn">Save Locally</button>
