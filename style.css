@@ -217,6 +217,7 @@ input[type="text"], input[type="password"] {
     padding: 6px;
 }
 
+/* Dual-Layer Workspace Layout */
 .editor-workspace {
     flex: 1;
     display: flex;
@@ -240,18 +241,55 @@ input[type="text"], input[type="password"] {
     white-space: pre;
 }
 
-#editor {
+.editor-wrapper {
+    position: relative;
     flex: 1;
-    background: #1e1e1e;
-    color: #d4d4d4;
-    border: none;
+    height: 100%;
+    overflow: hidden;
+}
+
+.highlight-layer,
+.editor-textarea {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
     padding: 10px;
+    border: none;
+    outline: none;
+    box-sizing: border-box;
     font-family: Consolas, "Courier New", monospace;
     font-size: 0.85rem;
     line-height: 1.35;
-    resize: none;
-    outline: none;
     white-space: pre;
+    tab-size: 4;
+}
+
+/* Background Highlight Render Layer */
+.highlight-layer {
+    color: transparent;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 1;
+}
+
+/* Foreground Editable Input Layer */
+.editor-textarea {
+    background: transparent;
+    color: #d4d4d4;
+    resize: none;
+    z-index: 2;
+    caret-color: #ffffff;
     overflow-x: auto;
     overflow-y: auto;
+}
+
+/* Find Match Visual Styling */
+mark.search-highlight {
+    background-color: #613214;
+    color: transparent;
+    border: 1px solid #f1c40f;
+    border-radius: 2px;
 }
