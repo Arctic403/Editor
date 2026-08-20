@@ -1,1323 +1,302 @@
-// #region Global Constants & Variables
-const EXTENSION_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|html|htm|md|xml|cfg|ini|lua|py|cpp|c|h|hpp|cs|java|go|rs|php|rb|sh|bat|ps1|sql|yaml|yml|toml|env|gitignore|properties|log|swift|kt|kts|dart|r|m|mm|vue|svelte|astro|graphql|gql|prisma|diff|patch|dockerfile|makefile)$/i;
-
-let db;
+/* Mobile Workspace Editor — rebuilt workspace engine
+   Fixes: real file tree, text/binary storage, ZIP import/export, downloads,
+   safe DOM rendering, IndexedDB migration, GitHub SHA updates, dirty-state,
+   better errors, folder operations, and mobile-friendly editor behavior.
+*/
+const TEXT_EXTENSIONS = new Set(`txt json js mjs cjs ts tsx jsx css scss sass less html htm md markdown xml cfg ini lua py pyw cpp c h hpp cs java go rs php rb sh bash bat ps1 sql yaml yml toml env gitignore properties log swift kt kts dart r m mm vue svelte astro graphql gql prisma diff patch dockerfile makefile svg`.split(/\s+/));
+const DB_NAME = "LocalWorkspaceDB";
+const DB_VERSION = 4;
+let db = null;
+let dbReady = null;
+let selectedFolderPath = "";
+let secondaryPaneFileName = "";
 let lastSearchIndex = 0;
-let selectedFolderPath = ""; 
-let secondaryPaneFileName = ""; 
-let isDirty = false; 
-// #endregion
+let isDirty = false;
+let autoSaveTimer = null;
 
-// #region Helper Utilities
-function bindClick(id, handler) {
-    const element = document.getElementById(id);
-    if (element) {
-        element.addEventListener("click", handler);
-    }
+const $ = id => document.getElementById(id);
+const bindClick = (id, fn) => { const el = $(id); if (el) el.addEventListener("click", fn); };
+
+function escapeHtml(value = "") {
+  return String(value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+}
+function escapeRegExp(value = "") { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function normalizePath(path) {
+  return String(path || "").replace(/\\/g,"/").split("/").filter(Boolean).join("/");
+}
+function basename(path) { const p = normalizePath(path).split("/"); return p[p.length-1] || ""; }
+function dirname(path) { const p = normalizePath(path).split("/"); p.pop(); return p.join("/"); }
+function extension(path) {
+  const n = basename(path).toLowerCase();
+  if (n === "dockerfile" || n === "makefile" || n === ".gitignore" || n === ".env") return n;
+  const i = n.lastIndexOf("."); return i >= 0 ? n.slice(i+1) : "";
+}
+function isTextPath(path) { return TEXT_EXTENSIONS.has(extension(path)); }
+function isTextContent(value) {
+  if (!(value instanceof ArrayBuffer)) return true;
+  const bytes = new Uint8Array(value).subarray(0, 4096);
+  let bad = 0;
+  for (const b of bytes) if (b === 0 || (b < 7 || (b > 14 && b < 32))) bad++;
+  return bytes.length === 0 || bad / bytes.length < 0.02;
+}
+function bufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer); let out = ""; const chunk = 0x8000;
+  for (let i=0;i<bytes.length;i+=chunk) out += String.fromCharCode(...bytes.subarray(i,i+chunk));
+  return btoa(out);
+}
+function base64ToBuffer(base64) {
+  const raw = atob(base64); const out = new Uint8Array(raw.length);
+  for (let i=0;i<raw.length;i++) out[i] = raw.charCodeAt(i); return out.buffer;
+}
+function makeFile(path, content, type="text", mime="") {
+  return { path: normalizePath(path), name: basename(path), content, type, mime: mime || (type === "text" ? "text/plain;charset=utf-8" : "application/octet-stream"), updatedAt: Date.now() };
 }
 
-function isTextContent(str) {
-    if (!str) return true;
-    let nonPrintable = 0;
-    for (let i = 0; i < Math.min(str.length, 1000); i++) {
-        const code = str.charCodeAt(i);
-        if (code < 9 || (code > 13 && code < 32)) {
-            nonPrintable++;
-        }
-    }
-    return (nonPrintable / Math.min(str.length, 1000)) < 0.1;
+function openDatabase() {
+  dbReady = new Promise((resolve,reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = e => {
+      const database = e.target.result;
+      if (!database.objectStoreNames.contains("files")) database.createObjectStore("files", { keyPath: "path" });
+      else {
+        const old = e.target.transaction.objectStore("files");
+        // Existing v3 store is keyed by name; path is equivalent. Existing records are preserved.
+        // No destructive migration is performed.
+      }
+    };
+    request.onsuccess = e => { db = e.target.result; db.onversionchange = () => db.close(); resolve(db); };
+    request.onerror = () => reject(request.error || new Error("Could not open local workspace database."));
+  });
+  return dbReady;
 }
-
-function decodeBase64Text(base64Str) {
-    try {
-        const cleanBase64 = base64Str.replace(/^data:application\/octet-stream;base64,/, "");
-        const binaryString = atob(cleanBase64);
-        if (isTextContent(binaryString)) {
-            return binaryString;
-        }
-    } catch (e) {}
-    return base64Str;
+async function ready() { return db || await dbReady; }
+function dbRequest(mode, callback) {
+  return ready().then(database => new Promise((resolve,reject) => {
+    const tx = database.transaction("files", mode), store = tx.objectStore("files");
+    let result;
+    try { result = callback(store); } catch(e) { reject(e); return; }
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(tx.error || new Error("Local database error."));
+    tx.onabort = () => reject(tx.error || new Error("Local database transaction aborted."));
+  }));
 }
+async function getAllFiles() { return dbRequest("readonly", store => new Promise((resolve,reject)=>{ const r=store.getAll(); r.onsuccess=()=>resolve(r.result||[]); r.onerror=()=>reject(r.error); })); }
+async function getFile(path) { return dbRequest("readonly", store => new Promise((resolve,reject)=>{ const r=store.get(normalizePath(path)); r.onsuccess=()=>resolve(r.result||null); r.onerror=()=>reject(r.error); })); }
+async function putFile(file) { return dbRequest("readwrite", store => store.put(file)); }
+async function deletePath(path) { return dbRequest("readwrite", store => store.delete(normalizePath(path))); }
 
-function escapeHtml(text) {
-    return text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-function escapeRegExp(string) {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function switchTab(viewName) {
-    document.querySelectorAll('.page-view').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-
-    const targetView = document.getElementById(viewName + 'View');
-    const targetTab = document.getElementById('tab' + viewName.charAt(0).toUpperCase() + viewName.slice(1));
-
-    if (targetView) targetView.classList.add('active');
-    if (targetTab) targetTab.classList.add('active');
-}
-
-function applySyntaxHighlighting(code, filename) {
-    if (!filename) return escapeHtml(code);
-    const ext = filename.split('.').pop().toLowerCase();
-    let escaped = escapeHtml(code);
-
-    if (["js", "ts", "jsx", "tsx", "json", "mjs", "cjs"].includes(ext)) {
-        return escaped
-            .replace(/(&quot;[\s\S]*?&quot;|&#039;[\s\S]*?&#039;|`[\s\S]*?`)/g, '<span style="color: #ce9178;">$1</span>')
-            .replace(/(\/\/.x*?|\/\*[\s\S]*?\*\/)/g, '<span style="color: #6a9955;">$1</span>')
-            .replace(/\b(const|let|var|function|return|if|else|for|while|import|export|from|async|await|class|try|catch|new|this)\b/g, '<span style="color: #569cd6;">$1</span>')
-            .replace(/\b(true|false|null|undefined|NaN)\b/g, '<span style="color: #569cd6;">$1</span>')
-            .replace(/\b(\d+)\b/g, '<span style="color: #b5cea8;">$1</span>');
-    }
-
-    if (["html", "xml", "svg"].includes(ext)) {
-        return escaped
-            .replace(/(&lt;\/?[a-zA-Z0-9\-]+)/g, '<span style="color: #569cd6;">$1</span>')
-            .replace(/([a-zA-Z\-]+)=(&quot;.*?&quot;|&#039;.*?&#039;)/g, '<span style="color: #9cdcfe;">$1</span>=<span style="color: #ce9178;">$2</span>')
-            .replace(/(&lt;!--[\s\S]*?--&gt;)/g, '<span style="color: #6a9955;">$1</span>');
-    }
-
-    if (["css", "scss", "sass", "less"].includes(ext)) {
-        return escaped
-            .replace(/(\/\*[\s\S]*?\*\/)/g, '<span style="color: #6a9955;">$1</span>')
-            .replace(/([a-zA-Z\-]+)\s*:/g, '<span style="color: #9cdcfe;">$1</span>:')
-            .replace(/(#[a-fA-F0-9]{3,6}|\d+px|\d+rem|\d+%)/g, '<span style="color: #b5cea8;">$1</span>');
-    }
-
-    return escaped;
+async function saveFileToDb(path, content, type="text", mime="") {
+  const normalized = normalizePath(path);
+  if (!normalized) throw new Error("File path cannot be empty.");
+  const existing = await getFile(normalized);
+  return putFile(makeFile(normalized, content, type, mime || existing?.mime));
 }
 
 function updateDirtyIndicator(dirty) {
-    isDirty = dirty;
-    const dot = document.getElementById("saveIndicator");
-    if (dot) {
-        dot.className = "save-indicator " + (dirty ? "dirty" : "clean");
-        dot.textContent = dirty ? "●" : "○";
-    }
+  isDirty = !!dirty;
+  const el = $("saveIndicator");
+  if (el) { el.className = `save-indicator ${isDirty ? "dirty" : "clean"}`; el.textContent = isDirty ? "●" : "○"; el.title = isDirty ? "Unsaved changes" : "Saved"; }
 }
-// #endregion
-
-// #region Application Initialization
-document.addEventListener("DOMContentLoaded", function () {
-    initDatabase();
-    bindUIEvents();
-    bindGitHubEvents();
-    initSymbolBar();
-    initQuickOpen();
-    initThemeSelector();
-});
-
-function initDatabase() {
-    const request = indexedDB.open("LocalWorkspaceDB", 3);
-
-    request.onupgradeneeded = function (event) {
-        db = event.target.result;
-        if (!db.objectStoreNames.contains("files")) {
-            db.createObjectStore("files", { keyPath: "name" });
-        }
-    };
-
-    request.onsuccess = function (event) {
-        db = event.target.result;
-        loadFiles();
-        restoreSettings();
-    };
+function ensureCanSwitch() {
+  if (!isDirty) return true;
+  return confirm("You have unsaved changes. Continue and discard them?");
+}
+function switchTab(name) {
+  document.querySelectorAll(".page-view").forEach(x=>x.classList.remove("active"));
+  document.querySelectorAll(".tab-btn").forEach(x=>x.classList.remove("active"));
+  $(name+"View")?.classList.add("active");
+  $("tab"+name.charAt(0).toUpperCase()+name.slice(1))?.classList.add("active");
 }
 
-function restoreSettings() {
-    const tokenInput = document.getElementById("tokenInput");
-    if (tokenInput) {
-        const token = localStorage.getItem("gh_token") || "";
-        tokenInput.value = token;
-        if (token) {
-            fetchGitHubRepos(token);
-        }
-    }
-    const savedTheme = localStorage.getItem("editor_theme") || "dark";
-    const themeSelect = document.getElementById("themeSelect");
-    if (themeSelect) {
-        themeSelect.value = savedTheme;
-        applyTheme(savedTheme);
-    }
-}
-
-const tokenInputEl = document.getElementById("tokenInput");
-if (tokenInputEl) {
-    tokenInputEl.addEventListener("input", e => localStorage.setItem("gh_token", e.target.value.trim()));
-}
-// #endregion
-
-// #region Theme Switching Logic
-function initThemeSelector() {
-    const themeSelect = document.getElementById("themeSelect");
-    if (themeSelect) {
-        themeSelect.addEventListener("change", function () {
-            applyTheme(this.value);
-            localStorage.setItem("editor_theme", this.value);
-        });
-    }
-}
-
-function applyTheme(theme) {
-    document.body.classList.remove("theme-light", "theme-monokai");
-    if (theme === "light") document.body.classList.add("theme-light");
-    if (theme === "monokai") document.body.classList.add("theme-monokai");
-}
-// #endregion
-
-// #region Accessory Keyboard & Quick Open Features
-function initSymbolBar() {
-    const symbols = ["{", "}", "(", ")", "[", "]", ";", "=", ":", "\"", "'", "<", ">", "/", "\\", "`", "$", "#", "|", "&"];
-    const container = document.getElementById("symbolBar");
-    if (!container) return;
-
-    container.innerHTML = "";
-    symbols.forEach(sym => {
-        const btn = document.createElement("button");
-        btn.className = "symbol-btn";
-        btn.textContent = sym;
-        btn.onclick = (e) => {
-            e.preventDefault();
-            insertSymbolAtCursor(sym);
-        };
-        container.appendChild(btn);
+function buildTree(files) {
+  const root = { children: new Map(), files: [] };
+  for (const file of files) {
+    const parts = normalizePath(file.path || file.name).split("/");
+    let node = root;
+    parts.forEach((part,i)=>{
+      if (i === parts.length-1) node.files.push({ ...file, path: parts.slice(0,i+1).join("/") });
+      else { if (!node.children.has(part)) node.children.set(part,{children:new Map(),files:[]}); node=node.children.get(part); }
     });
+  }
+  return root;
+}
+function sortTreeNode(node) {
+  node.children = new Map([...node.children.entries()].sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true,sensitivity:"base"})));
+  node.files.sort((a,b)=>basename(a.path).localeCompare(basename(b.path),undefined,{numeric:true,sensitivity:"base"}));
+  node.children.forEach(sortTreeNode);
+}
+function createTreeFolder(name,path,node) {
+  const wrap=document.createElement("div"); wrap.className="tree-folder";
+  const row=document.createElement("div"); row.className="tree-row folder-row"; row.tabIndex=0;
+  const caret=document.createElement("span"); caret.className="tree-caret"; caret.textContent="▸";
+  const icon=document.createElement("span"); icon.textContent="📁";
+  const label=document.createElement("span"); label.className="tree-label"; label.textContent=name;
+  const actions=document.createElement("span"); actions.className="tree-actions";
+  const add=document.createElement("button"); add.className="tree-action"; add.title="New file here"; add.textContent="＋";
+  add.onclick=e=>{e.stopPropagation(); createFile(path);};
+  const del=document.createElement("button"); del.className="tree-action danger"; del.title="Delete folder"; del.textContent="×";
+  del.onclick=e=>{e.stopPropagation(); deleteFolder(path);};
+  actions.append(add,del); row.append(caret,icon,label,actions);
+  const children=document.createElement("div"); children.className="tree-children hidden";
+  row.onclick=()=>{ selectedFolderPath=path; children.classList.toggle("hidden"); caret.textContent=children.classList.contains("hidden")?"▸":"▾"; icon.textContent=children.classList.contains("hidden")?"📁":"📂"; };
+  row.ondragover=e=>{e.preventDefault();row.classList.add("drag-over")}; row.ondragleave=()=>row.classList.remove("drag-over"); row.ondrop=async e=>{e.preventDefault();row.classList.remove("drag-over");const src=e.dataTransfer.getData("text/plain");if(src) await moveFileToFolder(src,path);};
+  wrap.append(row,children); renderTreeNode(node,children,path); return wrap;
+}
+function renderTreeNode(node,container,parentPath="") {
+  node.children.forEach((child,name)=>container.appendChild(createTreeFolder(name,parentPath?parentPath+"/"+name:name,child)));
+  node.files.forEach(file=>{
+    const row=document.createElement("div"); row.className="tree-row file-row"; row.draggable=true; row.dataset.path=file.path;
+    const icon=document.createElement("span"); icon.textContent=file.type==="binary"?"◈":"📄";
+    const label=document.createElement("span"); label.className="tree-label"; label.textContent=basename(file.path); label.title=file.path;
+    const actions=document.createElement("span"); actions.className="tree-actions";
+    const dl=document.createElement("button"); dl.className="tree-action"; dl.title="Download"; dl.textContent="⇩"; dl.onclick=e=>{e.stopPropagation();downloadFile(file.path)};
+    const del=document.createElement("button"); del.className="tree-action danger"; del.title="Delete"; del.textContent="×"; del.onclick=e=>{e.stopPropagation();deleteFile(file.path)};
+    actions.append(dl,del); row.append(icon,label,actions); row.onclick=()=>openFile(file.path); row.ondragstart=e=>e.dataTransfer.setData("text/plain",file.path); container.appendChild(row);
+  });
+}
+async function loadFiles() {
+  try {
+    const files=await getAllFiles(); const root=buildTree(files); sortTreeNode(root);
+    const container=$("fileTree"); if(!container)return; container.replaceChildren();
+    if(!files.length){ const empty=document.createElement("div");empty.className="empty-tree";empty.textContent="No files yet. Import a folder/ZIP or create a file.";container.appendChild(empty); }
+    else renderTreeNode(root,container);
+    $("itemCount")?.replaceChildren(document.createTextNode(`${files.length} file${files.length===1?"":"s"}`));
+  } catch(e) { console.error(e); alert("Could not load workspace: "+e.message); }
 }
 
-function insertSymbolAtCursor(symbol) {
-    const editor = document.getElementById("editor");
-    if (!editor) return;
-
-    const start = editor.selectionStart;
-    const end = editor.selectionEnd;
-    const text = editor.value;
-
-    editor.value = text.substring(0, start) + symbol + text.substring(end);
-    editor.selectionStart = editor.selectionEnd = start + symbol.length;
-
-    updateLineNumbers();
-    updateHighlights();
-    renderCodeBlockNav(editor.value);
-    updateDirtyIndicator(true);
-    autoSaveCurrentFile();
-    editor.focus();
+async function createFile(folder="") {
+  let name=prompt("Enter file path:",folder?folder+"/":""); if(!name)return;
+  name=normalizePath(name); if(!name||name.endsWith("/"))return;
+  if(await getFile(name)){alert("A file with that path already exists.");return;}
+  await saveFileToDb(name,""); await loadFiles(); await openFile(name);
+}
+async function deleteFile(path) {
+  if(!confirm(`Delete ${path}?`))return;
+  await deletePath(path);
+  const editor=$("editor"); if(editor?.dataset.filename===path) closeActiveFile(true);
+  await loadFiles();
+}
+async function deleteFolder(folder) {
+  if(!confirm(`Delete folder "${folder}" and all contained files?`))return;
+  const files=await getAllFiles(), prefix=normalizePath(folder)+"/";
+  await dbRequest("readwrite",store=>{for(const f of files)if(f.path===folder||f.path.startsWith(prefix))store.delete(f.path);});
+  const editor=$("editor"); if(editor?.dataset.filename===folder||editor?.dataset.filename?.startsWith(prefix)) closeActiveFile(true);
+  await loadFiles();
+}
+async function moveFileToFolder(source,targetFolder) {
+  source=normalizePath(source); targetFolder=normalizePath(targetFolder); const file=await getFile(source); if(!file)return;
+  const dest=normalizePath((targetFolder?targetFolder+"/":"")+basename(source)); if(dest===source)return;
+  if(await getFile(dest)){alert(`A file already exists at ${dest}.`);return;}
+  await dbRequest("readwrite",store=>{store.delete(source);store.put({...file,path:dest,name:basename(dest),updatedAt:Date.now()});});
+  if($("editor")?.dataset.filename===source){$("editor").dataset.filename=dest;$("activeFileLabel").textContent="Editing: "+dest;updateBreadcrumbs(dest);}
+  await loadFiles();
 }
 
-function initQuickOpen() {
-    bindClick("quickOpenBtn", toggleQuickOpenModal);
-    bindClick("closeQuickOpenModal", toggleQuickOpenModal);
+async function openFile(path) {
+  if(!ensureCanSwitch())return;
+  const file=await getFile(path); if(!file)return;
+  const editor=$("editor"); if(!editor)return;
+  if(file.type==="binary") { alert("This is a binary file. It can be downloaded, but it is not editable as text."); return; }
+  editor.value=String(file.content??""); editor.dataset.filename=file.path; editor.dataset.type=file.type;
+  $("activeFileLabel").textContent="Editing: "+file.path; lastSearchIndex=0; updateLineNumbers();updateHighlights();renderCodeBlockNav(editor.value);updateBreadcrumbs(file.path);updateDirtyIndicator(false);switchTab("editor");
+}
+function closeActiveFile(force=false){ if(!force&&!ensureCanSwitch())return false; const e=$("editor");if(!e)return true;e.value="";e.dataset.filename="";e.dataset.type="";$("activeFileLabel").textContent="No file selected";updateLineNumbers();updateHighlights();renderCodeBlockNav("");updateBreadcrumbs("");updateDirtyIndicator(false);return true; }
+async function saveCurrentFile(showAlert=false) {
+  const e=$("editor"), path=e?.dataset.filename; if(!path){if(showAlert)alert("Select a file first.");return false;}
+  try { await saveFileToDb(path,e.value,"text");updateDirtyIndicator(false);loadFiles();if(showAlert)alert("Saved locally!");return true; }
+  catch(err){alert("Save failed: "+err.message);return false;}
+}
+function autoSaveCurrentFile(){clearTimeout(autoSaveTimer);autoSaveTimer=setTimeout(()=>saveCurrentFile(false),700);}
 
-    const input = document.getElementById("quickOpenInput");
-    if (input) {
-        input.addEventListener("input", function () {
-            filterQuickOpenFiles(this.value.trim().toLowerCase());
-        });
-    }
+function updateLineNumbers(){const e=$("editor"),n=$("lineNumbers");if(!e||!n)return;n.textContent=Array.from({length:Math.max(1,e.value.split("\n").length)},(_,i)=>i+1).join("\n");}
+function updateHighlights(){
+  const e=$("editor"),code=$("highlightCode"),layer=$("highlightLayer");if(!e||!code)return;
+  let text=e.value;if(text.endsWith("\n"))text+=" ";const ext=extension(e.dataset.filename||"");
+  const map={js:"javascript",mjs:"javascript",cjs:"javascript",ts:"typescript",tsx:"tsx",jsx:"jsx",py:"python",md:"markdown",html:"markup",htm:"markup",xml:"markup",svg:"markup",css:"css",scss:"scss",json:"json",yaml:"yaml",yml:"yaml",sql:"sql",java:"java",c:"c",cpp:"cpp",cs:"csharp",go:"go",rs:"rust",php:"php",rb:"ruby",sh:"bash"};
+  const lang=map[ext]||"plaintext"; let rendered=escapeHtml(text);
+  if(window.Prism&&Prism.languages[lang]) rendered=Prism.highlight(text,Prism.languages[lang],lang);
+  const search=$("searchInput")?.value||""; if(search&&!$("searchReplaceBar")?.classList.contains("hidden")){const re=new RegExp(escapeRegExp(search),"gi");rendered=rendered.replace(re,m=>`<mark class="search-highlight">${m}</mark>`);}
+  code.innerHTML=rendered;if(layer){layer.scrollTop=e.scrollTop;layer.scrollLeft=e.scrollLeft;}
+}
+function updateBreadcrumbs(path){const c=$("breadcrumbBar");if(!c)return;c.replaceChildren();const root=document.createElement("span");root.className="breadcrumb-item";root.textContent="Workspace";root.onclick=()=>{selectedFolderPath="";switchTab("explorer");loadFiles()};c.appendChild(root);if(!path)return;let cur="";normalizePath(path).split("/").forEach((part,i)=>{const sep=document.createElement("span");sep.className="breadcrumb-separator";sep.textContent=" / ";c.appendChild(sep);cur=cur?cur+"/"+part:part;const item=document.createElement("span");item.className="breadcrumb-item";item.textContent=part;if(i<normalizePath(path).split("/").length-1){const p=cur;item.onclick=()=>{selectedFolderPath=p;switchTab("explorer");loadFiles()};}c.appendChild(item);});}
+function updateCodeBlockNav(content){renderCodeBlockNav(content)}
+function parseCodeBlocks(content){const lines=content.split("\n"),blocks=[];let current=null;lines.forEach((line,i)=>{const a=line.match(/\/\/\s*#(?:region|block)\s+(.*)/i),b=line.match(/\/\/\s*#end(?:region|block)/i);if(a)current={name:a[1].trim(),startLine:i+1};else if(b&&current){current.endLine=i+1;blocks.push(current);current=null;}});return blocks;}
+function renderCodeBlockNav(content){const c=$("blockNav");if(!c)return;c.replaceChildren();const blocks=parseCodeBlocks(content);if(!blocks.length){c.textContent="No defined #region blocks";return;}blocks.forEach(b=>{const item=document.createElement("button");item.className="block-nav-item";item.textContent=`🧩 ${b.name} (L${b.startLine}-${b.endLine})`;item.onclick=()=>jumpToLine(b.startLine);c.appendChild(item);});}
+function jumpToLine(line){const e=$("editor");if(!e)return;e.focus();e.scrollTop=(line-1)*20;}
 
-    document.addEventListener("keydown", function (e) {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
-            e.preventDefault();
-            toggleQuickOpenModal();
-        }
-    });
+async function importRegularFile(file){
+  const dest=normalizePath((selectedFolderPath?selectedFolderPath+"/":"")+file.name);
+  if(file.size>50*1024*1024){if(!confirm(`${file.name} is ${Math.round(file.size/1024/1024)} MB. Import anyway?`))return;}
+  const textCandidate=isTextPath(dest);
+  if(textCandidate){const content=await file.text();await saveFileToDb(dest,content,"text",file.type||"text/plain;charset=utf-8");}
+  else {const buffer=await file.arrayBuffer();const type=isTextContent(buffer)?"text":"binary";if(type==="text") await saveFileToDb(dest,new TextDecoder().decode(buffer),"text",file.type||"text/plain;charset=utf-8");else await saveFileToDb(dest,buffer,"binary",file.type||"application/octet-stream");}
+}
+async function unpackZip(zipFile){
+  if(typeof JSZip==="undefined")throw new Error("JSZip did not load. Check your connection and reload.");
+  const zip=await JSZip.loadAsync(await zipFile.arrayBuffer());let count=0;
+  for(const [rawPath,entry] of Object.entries(zip.files)){
+    if(entry.dir)continue; const rel=normalizePath(rawPath);if(!rel)continue;const path=normalizePath((selectedFolderPath?selectedFolderPath+"/":"")+rel);
+    const bytes=await entry.async("arraybuffer");
+    if(isTextPath(path)||isTextContent(bytes)) await saveFileToDb(path,new TextDecoder().decode(bytes),"text","text/plain;charset=utf-8");
+    else await saveFileToDb(path,bytes,"binary","application/octet-stream"); count++;
+  }
+  return count;
 }
 
-function toggleQuickOpenModal() {
-    const modal = document.getElementById("quickOpenModal");
-    if (!modal) return;
-    const isHidden = modal.classList.toggle("hidden");
-    if (!isHidden) {
-        const input = document.getElementById("quickOpenInput");
-        if (input) {
-            input.value = "";
-            input.focus();
-        }
-        filterQuickOpenFiles("");
-    }
+async function exportWorkspace(){
+  if(typeof JSZip==="undefined")return alert("JSZip is unavailable.");
+  const files=await getAllFiles();if(!files.length)return alert("Workspace is empty.");const zip=new JSZip();
+  for(const f of files){if(f.type==="binary"&&f.content instanceof ArrayBuffer)zip.file(f.path,f.content);else zip.file(f.path,String(f.content??""));}
+  const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});downloadBlob(blob,"workspace.zip");
 }
+async function downloadFile(path){const f=await getFile(path);if(!f)return;let blob;if(f.type==="binary"&&f.content instanceof ArrayBuffer)blob=new Blob([f.content],{type:f.mime});else blob=new Blob([String(f.content??"")],{type:f.mime||"text/plain;charset=utf-8"});downloadBlob(blob,basename(path));}
+function downloadBlob(blob,name){const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=name;a.rel="noopener";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 
-function filterQuickOpenFiles(query) {
-    if (!db) return;
-    const container = document.getElementById("quickOpenResults");
-    if (!container) return;
-
-    const tx = db.transaction("files", "readonly");
-    const store = tx.objectStore("files");
-    const req = store.getAllKeys();
-
-    req.onsuccess = function () {
-        const keys = req.result;
-        container.innerHTML = "";
-
-        const filtered = keys.filter(k => k.toLowerCase().includes(query));
-        filtered.forEach(key => {
-            const item = document.createElement("div");
-            item.className = "quick-item";
-            item.textContent = key;
-            item.onclick = () => {
-                openFile(key);
-                toggleQuickOpenModal();
-            };
-            container.appendChild(item);
-        });
-
-        if (filtered.length === 0) {
-            container.innerHTML = `<div style="padding:8px; font-size:0.8rem; color:#888;">No matching files</div>`;
-        }
-    };
+function readFileAsBase64(content,type){return new Promise((resolve,reject)=>{const blob=content instanceof ArrayBuffer?new Blob([content],{type}):new Blob([String(content)],{type:"text/plain;charset=utf-8"});const r=new FileReader();r.onload=()=>resolve(String(r.result).split(",")[1]||"");r.onerror=()=>reject(r.error);r.readAsDataURL(blob);});}
+function apiHeaders(token){return {Authorization:`Bearer ${token}`,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28","Content-Type":"application/json"};}
+async function githubFetch(url,options={}){const res=await fetch(url,options);let data=null;try{data=await res.json();}catch{}if(!res.ok)throw new Error(data?.message||`GitHub returned HTTP ${res.status}`);return data;}
+async function fetchGitHubRepos(token){const select=$("repoSelect");if(!select)return;select.innerHTML="<option>Loading repositories...</option>";try{const repos=await githubFetch("https://api.github.com/user/repos?per_page=100&sort=updated",{headers:apiHeaders(token)});select.innerHTML="<option value=\"\">-- Choose Repository --</option>";const saved=localStorage.getItem("gh_repo");repos.forEach(r=>{const o=document.createElement("option");o.value=r.full_name;o.textContent=r.full_name;o.selected=r.full_name===saved;select.appendChild(o);});if(saved)await fetchGitHubBranches(token,saved);}catch(e){select.innerHTML="<option value=\"\">GitHub connection failed</option>";alert(e.message);}}
+async function fetchGitHubBranches(token,repo){const select=$("branchSelect");if(!select||!repo)return;select.innerHTML="<option>Loading branches...</option>";try{const branches=await githubFetch(`https://api.github.com/repos/${encodeURIComponent(repo)}/branches?per_page=100`,{headers:apiHeaders(token)});select.replaceChildren();const saved=localStorage.getItem("gh_branch");branches.forEach(b=>{const o=document.createElement("option");o.value=b.name;o.textContent=b.name;o.selected=(saved&&b.name===saved)||(!saved&&(b.name==="main"||b.name==="master"));select.appendChild(o);});}catch(e){select.innerHTML="<option value=\"\">Failed to load branches</option>";alert(e.message);}}
+async function getGithubFileSha(token,repo,path,branch){const url=`https://api.github.com/repos/${encodeURIComponent(repo)}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(branch)}`;const res=await fetch(url,{headers:apiHeaders(token)});if(res.status===404)return null;const data=await res.json();if(!res.ok)throw new Error(data?.message||`GitHub returned HTTP ${res.status}`);return data.sha||null;}
+async function pushFileToGitHub(path,content,token,repo,branch,type="text",mime="text/plain;charset=utf-8"){
+  const encodedPath=path.split("/").map(encodeURIComponent).join("/");const url=`https://api.github.com/repos/${encodeURIComponent(repo)}/contents/${encodedPath}`;const sha=await getGithubFileSha(token,repo,path,branch);const base64=await readFileAsBase64(content,mime);
+  const body={message:`Update ${path} via Mobile Workspace`,content:base64,branch};if(sha)body.sha=sha;
+  return githubFetch(url,{method:"PUT",headers:apiHeaders(token),body:JSON.stringify(body)});
 }
-// #endregion
+async function importRepoFromGitHub(token,repo,branch){const tree=await githubFetch(`https://api.github.com/repos/${encodeURIComponent(repo)}/git/trees/${encodeURIComponent(branch)}?recursive=1`,{headers:apiHeaders(token)});const blobs=tree.tree.filter(x=>x.type==="blob");let count=0;for(const item of blobs){try{const r=await fetch(item.url,{headers:{...apiHeaders(token),Accept:"application/vnd.github.raw+json"}});if(!r.ok)continue;const buf=await r.arrayBuffer();const type=isTextPath(item.path)||isTextContent(buf)?"text":"binary";await saveFileToDb(item.path,type==="text"?new TextDecoder().decode(buf):buf,type);count++;}catch(e){console.warn("Skipped",item.path,e);}}await loadFiles();return count;}
 
-// #region GitHub API Integration
-function bindGitHubEvents() {
-    bindClick("connectGhBtn", function() {
-        const token = document.getElementById("tokenInput").value.trim();
-        if (!token) return alert("Please enter a valid GitHub PAT first.");
-        fetchGitHubRepos(token);
-    });
+function toggleSplitPane(){const pane=$("secondaryPane");if(!pane)return;const hidden=pane.classList.toggle("hidden");$("splitPaneBtn").textContent=hidden?"▥ Split":"✕ Single";if(!hidden&&!secondaryPaneFileName&&$("editor")?.dataset.filename)openSecondaryPaneFile($("editor").dataset.filename);}
+async function openSecondaryPaneFile(path){const f=await getFile(path);if(!f||f.type==="binary")return;$("secondaryEditorView").value=String(f.content??"");$("secondaryPaneTitle").textContent=path;secondaryPaneFileName=path;$("secondaryHighlightCode").textContent=String(f.content??"");}
+function toggleQuickOpen(){const m=$("quickOpenModal");if(!m)return;const hidden=m.classList.toggle("hidden");if(!hidden){$("quickOpenInput").value="";$("quickOpenInput").focus();filterQuickOpenFiles("");}}
+async function filterQuickOpenFiles(q){const c=$("quickOpenResults");if(!c)return;const files=await getAllFiles();c.replaceChildren();const hits=files.filter(f=>f.path.toLowerCase().includes(q.toLowerCase())).sort((a,b)=>a.path.localeCompare(b.path));hits.forEach(f=>{const x=document.createElement("button");x.className="quick-item";x.textContent=f.path;x.onclick=()=>{toggleQuickOpen();openFile(f.path)};c.appendChild(x);});if(!hits.length)c.textContent="No matching files";}
 
-    const repoSelect = document.getElementById("repoSelect");
-    if (repoSelect) {
-        repoSelect.addEventListener("change", function() {
-            const selectedRepo = this.value;
-            localStorage.setItem("gh_repo", selectedRepo);
-            if (selectedRepo) {
-                const token = document.getElementById("tokenInput").value.trim();
-                fetchGitHubBranches(token, selectedRepo);
-                if (confirm(`Fetch and import files from repository "${selectedRepo}" into your local workspace?`)) {
-                    importRepoFromGitHub(token, selectedRepo);
-                }
-            }
-        });
-    }
-
-    const branchSelect = document.getElementById("branchSelect");
-    if (branchSelect) {
-        branchSelect.addEventListener("change", function() {
-            localStorage.setItem("gh_branch", this.value);
-        });
-    }
+function bindUI(){
+  bindClick("tabExplorer",()=>switchTab("explorer"));bindClick("tabEditor",()=>switchTab("editor"));bindClick("newFileBtn",()=>createFile(selectedFolderPath));bindClick("exportWorkspaceBtn",exportWorkspace);bindClick("quickOpenBtn",toggleQuickOpen);bindClick("closeQuickOpenModal",toggleQuickOpen);bindClick("splitPaneBtn",toggleSplitPane);bindClick("closeSplitBtn",toggleSplitPane);
+  bindClick("saveLocalBtn",()=>saveCurrentFile(true));bindClick("closeFileBtn",()=>closeActiveFile(false));
+  bindClick("searchToggleBtn",()=>{$("searchReplaceBar")?.classList.toggle("hidden");updateHighlights();});
+  bindClick("findNextBtn",()=>{const e=$("editor"),q=$("searchInput")?.value;if(!e||!q)return;const start=e.value.toLowerCase().indexOf(q.toLowerCase(),lastSearchIndex);const pos=start<0?e.value.toLowerCase().indexOf(q.toLowerCase()):start;if(pos<0)return alert("No matches found.");e.focus();e.setSelectionRange(pos,pos+q.length);lastSearchIndex=pos+q.length;});
+  bindClick("replaceBtn",()=>{const e=$("editor"),q=$("searchInput")?.value,r=$("replaceInput")?.value;if(!e||!q)return;const i=e.value.indexOf(q);if(i<0)return alert("No match found.");e.value=e.value.slice(0,i)+r+e.value.slice(i+q.length);updateDirtyIndicator(true);updateLineNumbers();updateHighlights();autoSaveCurrentFile();});
+  bindClick("replaceAllBtn",()=>{const e=$("editor"),q=$("searchInput")?.value,r=$("replaceInput")?.value;if(!e||!q)return;const re=new RegExp(escapeRegExp(q),"g"),matches=(e.value.match(re)||[]).length;if(!matches)return alert("No matches found.");if(!confirm(`Replace ${matches} occurrence(s)?`))return;e.value=e.value.replace(re,r);updateDirtyIndicator(true);updateLineNumbers();updateHighlights();autoSaveCurrentFile();});
+  bindClick("jumpLineBtn",()=>{const n=parseInt(prompt("Jump to line:"),10);if(Number.isFinite(n)&&n>0)jumpToLine(n);});
+  bindClick("fullscreenBtn",()=>{const c=$("appContainer");const on=c.classList.toggle("fullscreen");$("fullscreenBtn").textContent=on?"⛶ Exit":"⛶ Fullscreen";});
+  bindClick("connectGhBtn",()=>{const token=$("tokenInput")?.value.trim();if(!token)return alert("Enter a GitHub token first.");localStorage.setItem("gh_token",token);fetchGitHubRepos(token);});
+  $("repoSelect")?.addEventListener("change",async e=>{const repo=e.target.value;localStorage.setItem("gh_repo",repo);const token=$("tokenInput").value.trim();if(repo){await fetchGitHubBranches(token,repo);if(confirm(`Import files from ${repo}?`)){try{const n=await importRepoFromGitHub(token,repo,$("branchSelect").value||"main");alert(`Imported ${n} file(s).`);}catch(err){alert("Repository import failed: "+err.message);}}}});
+  $("branchSelect")?.addEventListener("change",e=>localStorage.setItem("gh_branch",e.target.value));
+  $("tokenInput")?.addEventListener("input",e=>localStorage.setItem("gh_token",e.target.value.trim()));
+  $("quickOpenInput")?.addEventListener("input",e=>filterQuickOpenFiles(e.target.value));
+  document.addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="p"){e.preventDefault();toggleQuickOpen();}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="s"){e.preventDefault();saveCurrentFile(true);}});
+  const editor=$("editor");
+  editor?.addEventListener("input",()=>{updateLineNumbers();updateHighlights();renderCodeBlockNav(editor.value);updateDirtyIndicator(true);autoSaveCurrentFile();});
+  editor?.addEventListener("keydown",e=>{if(e.key==="Tab"){e.preventDefault();const s=editor.selectionStart,en=editor.selectionEnd;editor.value=editor.value.slice(0,s)+"    "+editor.value.slice(en);editor.selectionStart=editor.selectionEnd=s+4;updateLineNumbers();updateHighlights();updateDirtyIndicator(true);autoSaveCurrentFile();}});
+  editor?.addEventListener("scroll",()=>{$("lineNumbers").scrollTop=editor.scrollTop;$(`highlightLayer`)?.scrollTo(editor.scrollLeft,editor.scrollTop);});
+  $("searchInput")?.addEventListener("input",updateHighlights);
+  $("uploadInput")?.addEventListener("change",async e=>{const files=[...e.target.files||[]];try{let n=0;for(const f of files){if(f.name.toLowerCase().endsWith(".zip"))n+=await unpackZip(f);else{await importRegularFile(f);n++;}}await loadFiles();alert(`Imported ${n} file(s).`);}catch(err){alert("Import failed: "+err.message);}finally{e.target.value="";}});
+  bindClick("pushGitHubBtn",pushCurrentToGitHub);bindClick("pushAllGitHubBtn",pushAllToGitHub);
 }
-
-async function fetchGitHubRepos(token) {
-    const repoSelect = document.getElementById("repoSelect");
-    if (!repoSelect) return;
-    repoSelect.innerHTML = '<option value="">Loading repositories...</option>';
-
-    try {
-        const res = await fetch("https://api.github.com/user/repos?per_page=100&sort=updated", {
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Accept": "application/vnd.github.v3+json"
-            }
-        });
-
-        if (!res.ok) throw new Error("Authentication failed or invalid token.");
-
-        const repos = await res.json();
-        repoSelect.innerHTML = '<option value="">-- Choose Repository --</option>';
-
-        const savedRepo = localStorage.getItem("gh_repo");
-        repos.forEach(repo => {
-            const opt = document.createElement("option");
-            opt.value = repo.full_name;
-            opt.textContent = repo.full_name;
-            if (savedRepo && repo.full_name === savedRepo) opt.selected = true;
-            repoSelect.appendChild(opt);
-        });
-
-        if (savedRepo) {
-            fetchGitHubBranches(token, savedRepo);
-        }
-    } catch (err) {
-        repoSelect.innerHTML = '<option value="">Failed to load repos</option>';
-        alert("GitHub API Error: " + err.message);
-    }
-}
-
-async function fetchGitHubBranches(token, repo) {
-    const branchSelect = document.getElementById("branchSelect");
-    if (!branchSelect) return;
-    branchSelect.innerHTML = '<option value="">Loading branches...</option>';
-
-    try {
-        const res = await fetch(`https://api.github.com/repos/${repo}/branches`, {
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Accept": "application/vnd.github.v3+json"
-            }
-        });
-
-        if (!res.ok) throw new Error("Could not fetch branches.");
-
-        const branches = await res.json();
-        branchSelect.innerHTML = '';
-
-        const savedBranch = localStorage.getItem("gh_branch");
-        branches.forEach(branch => {
-            const opt = document.createElement("option");
-            opt.value = branch.name;
-            opt.textContent = branch.name;
-            if ((savedBranch && branch.name === savedBranch) || (!savedBranch && (branch.name === "main" || branch.name === "master"))) {
-                opt.selected = true;
-            }
-            branchSelect.appendChild(opt);
-        });
-    } catch (err) {
-        branchSelect.innerHTML = '<option value="">Failed to load branches</option>';
-    }
-}
-
-async function importRepoFromGitHub(token, repo) {
-    const branchSelect = document.getElementById("branchSelect");
-    const branch = (branchSelect && branchSelect.value) ? branchSelect.value : "main";
-    try {
-        const res = await fetch(`https://api.github.com/repos/${repo}/git/trees/${branch}?recursive=1`, {
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Accept": "application/vnd.github.v3+json"
-            }
-        });
-
-        if (!res.ok) throw new Error("Unable to fetch repository file tree.");
-
-        const data = await res.json();
-        const filesToFetch = data.tree.filter(item => item.type === "blob");
-
-        let imported = 0;
-        for (const file of filesToFetch) {
-            const fileRes = await fetch(file.url, {
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Accept": "application/vnd.github.v3.raw"
-                }
-            });
-
-            if (fileRes.ok) {
-                const text = await fileRes.text();
-                await saveFileToDb(file.path, text);
-                imported++;
-            }
-        }
-
-        loadFiles();
-        alert(`Successfully imported ${imported} file(s) from GitHub!`);
-    } catch (err) {
-        alert("Repository Import Failed: " + err.message);
-    }
-}
-
-async function pushFileToGitHub(name, content, token, repo, branch) {
-    const url = `https://api.github.com/repos/${repo}/contents/${name}`;
-    const headers = {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "Accept": "application/vnd.github.v3+json"
-    };
-
-    let sha = null;
-    try {
-        const getRes = await fetch(`${url}?ref=${branch}`, { headers });
-        if (getRes.ok) {
-            const fileData = await getRes.json();
-            sha = fileData.sha;
-        }
-    } catch (e) {}
-
-    // FileReader Base64 conversion prevents Stack Overflow call limits on large files
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const base64Content = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            const result = reader.result;
-            resolve(result.split(',')[1]);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
-
-    const body = {
-        message: `Update ${name} via Mobile Workspace`,
-        content: base64Content,
-        branch: branch,
-        ...(sha && { sha })
-    };
-
-    const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
-    if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.message || res.status);
-    }
-}
-// #endregion
-
-// #region Code Block Navigation Logic
-function parseCodeBlocks(content) {
-    const lines = content.split('\n');
-    const blocks = [];
-    let currentBlock = null;
-
-    lines.forEach((line, index) => {
-        const regionStart = line.match(/\/\/\s*#(?:region|block)\s+(.*)/i);
-        const regionEnd = line.match(/\/\/\s*#end(?:region|block)/i);
-
-        if (regionStart) {
-            currentBlock = { name: regionStart[1].trim(), startLine: index + 1 };
-        } else if (regionEnd && currentBlock) {
-            currentBlock.endLine = index + 1;
-            blocks.push(currentBlock);
-            currentBlock = null;
-        }
-    });
-
-    return blocks;
-}
-
-function renderCodeBlockNav(content) {
-    const navContainer = document.getElementById("blockNav");
-    if (!navContainer) return;
-
-    const blocks = parseCodeBlocks(content);
-    navContainer.innerHTML = "";
-
-    if (blocks.length === 0) {
-        navContainer.innerHTML = `<span class="no-blocks">No defined #region blocks</span>`;
-        return;
-    }
-
-    blocks.forEach(block => {
-        const item = document.createElement("div");
-        item.className = "block-nav-item";
-        item.innerHTML = `🧩 <strong>${block.name}</strong> <small>(L${block.startLine}-${block.endLine})</small>`;
-        item.onclick = () => jumpToLine(block.startLine);
-        navContainer.appendChild(item);
-    });
-}
-
-function jumpToLine(lineNumber) {
-    const editor = document.getElementById("editor");
-    if (!editor) return;
-    const lineHeight = 20;
-    editor.scrollTop = (lineNumber - 1) * lineHeight;
-    editor.focus();
-}
-// #endregion
-
-// #region UI Event Handlers & Editor Controls
-function bindUIEvents() {
-    const editor = document.getElementById("editor");
-    const highlightLayer = document.getElementById("highlightLayer");
-    const lineNumbers = document.getElementById("lineNumbers");
-    const searchInput = document.getElementById("searchInput");
-
-    bindClick("tabExplorer", () => switchTab('explorer'));
-    bindClick("tabEditor", () => switchTab('editor'));
-
-    if (editor) {
-        editor.addEventListener("input", function () {
-            updateLineNumbers();
-            updateHighlights();
-            renderCodeBlockNav(this.value);
-            updateDirtyIndicator(true);
-            autoSaveCurrentFile();
-        });
-
-        editor.addEventListener("keydown", function (e) {
-            if (e.key === "Tab") {
-                e.preventDefault();
-                const start = this.selectionStart;
-                const end = this.selectionEnd;
-
-                this.value = this.value.substring(0, start) + "    " + this.value.substring(end);
-                this.selectionStart = this.selectionEnd = start + 4;
-                updateLineNumbers();
-                updateHighlights();
-                renderCodeBlockNav(this.value);
-                updateDirtyIndicator(true);
-            }
-
-            if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-                e.preventDefault();
-                saveCurrentFile(true);
-            }
-        });
-
-        editor.addEventListener("scroll", function () {
-            if (lineNumbers) lineNumbers.scrollTop = editor.scrollTop;
-            if (highlightLayer) {
-                highlightLayer.scrollTop = editor.scrollTop;
-                highlightLayer.scrollLeft = editor.scrollLeft;
-            }
-        });
-    }
-
-    if (searchInput) {
-        searchInput.addEventListener("input", updateHighlights);
-    }
-
-    bindClick("closeFileBtn", function () {
-        if (!editor) return;
-        editor.value = "";
-        editor.dataset.filename = "";
-        const label = document.getElementById("activeFileLabel");
-        if (label) label.textContent = "No file selected";
-        updateLineNumbers();
-        updateHighlights();
-        renderCodeBlockNav("");
-        updateBreadcrumbs("");
-        updateDirtyIndicator(false);
-    });
-
-    bindClick("searchToggleBtn", function () {
-        const bar = document.getElementById("searchReplaceBar");
-        if (bar) bar.classList.toggle("hidden");
-        updateHighlights();
-    });
-
-    bindClick("fullscreenBtn", function () {
-        const appContainer = document.getElementById("appContainer");
-        const isFullscreen = appContainer.classList.toggle("fullscreen");
-        const btn = document.getElementById("fullscreenBtn");
-        if (btn) btn.textContent = isFullscreen ? "⛶ Exit" : "⛶ Fullscreen";
-    });
-
-    bindClick("splitPaneBtn", toggleSplitPane);
-    bindClick("closeSplitBtn", toggleSplitPane);
-
-    bindClick("jumpLineBtn", function () {
-        const lineStr = prompt("Enter line number:");
-        if (!lineStr) return;
-        const lineNum = parseInt(lineStr, 10);
-        if (!isNaN(lineNum) && lineNum > 0) {
-            jumpToLine(lineNum);
-        }
-    });
-
-    bindClick("exportWorkspaceBtn", async function () {
-        if (typeof JSZip === "undefined") return alert("JSZip library failed to load.");
-        if (!db) return;
-
-        const tx = db.transaction("files", "readonly");
-        const store = tx.objectStore("files");
-        const req = store.getAll();
-
-        req.onsuccess = async function () {
-            const files = req.result;
-            if (files.length === 0) return alert("No files to export.");
-
-            const zip = new JSZip();
-            files.forEach(file => zip.file(file.name, file.content));
-
-            const blob = await zip.generateAsync({ type: "blob" });
-            const link = document.createElement("a");
-            link.href = URL.createObjectURL(blob);
-            link.download = `workspace_backup_${new Date().toISOString().slice(0, 10)}.zip`;
-            link.click();
-            URL.revokeObjectURL(link.href);
-        };
-    });
-
-    bindClick("findNextBtn", function () {
-        const searchVal = document.getElementById("searchInput").value;
-        if (!searchVal) return alert("Enter text to find.");
-        if (!editor) return;
-
-        const text = editor.value;
-        const lowerText = text.toLowerCase();
-        const lowerSearch = searchVal.toLowerCase();
-
-        let index = lowerText.indexOf(lowerSearch, lastSearchIndex);
-
-        if (index === -1) {
-            index = lowerText.indexOf(lowerSearch, 0);
-        }
-
-        if (index !== -1) {
-            editor.focus();
-            editor.setSelectionRange(index, index + searchVal.length);
-            lastSearchIndex = index + searchVal.length;
-
-            const linesBefore = text.substring(0, index).split("\n").length;
-            const lineHeight = 20;
-            editor.scrollTop = (linesBefore - 2) * lineHeight;
-            
-            updateHighlights();
-        } else {
-            alert(`No matches found for "${searchVal}".`);
-            lastSearchIndex = 0;
-        }
-    });
-
-    bindClick("replaceBtn", function () {
-        const searchVal = document.getElementById("searchInput").value;
-        const replaceVal = document.getElementById("replaceInput").value;
-
-        if (!searchVal) return alert("Enter text to find.");
-        if (!editor) return;
-
-        const text = editor.value;
-        if (!text.includes(searchVal)) {
-            return alert(`Text "${searchVal}" not found.`);
-        }
-
-        if (confirm(`Replace next instance of "${searchVal}" with "${replaceVal}"?`)) {
-            editor.value = text.replace(searchVal, replaceVal);
-            updateLineNumbers();
-            updateHighlights();
-            renderCodeBlockNav(editor.value);
-            updateDirtyIndicator(true);
-            autoSaveCurrentFile();
-        }
-    });
-
-    bindClick("replaceAllBtn", function () {
-        const searchVal = document.getElementById("searchInput").value;
-        const replaceVal = document.getElementById("replaceInput").value;
-
-        if (!searchVal) return alert("Enter text to find.");
-        if (!editor) return;
-
-        const regex = new RegExp(escapeRegExp(searchVal), "g");
-        const matches = (editor.value.match(regex) || []).length;
-
-        if (matches === 0) {
-            return alert(`No occurrences of "${searchVal}" found.`);
-        }
-
-        if (confirm(`Replace all ${matches} occurrence(s) of "${searchVal}" with "${replaceVal}"?`)) {
-            editor.value = editor.value.replace(regex, replaceVal);
-            updateLineNumbers();
-            updateHighlights();
-            renderCodeBlockNav(editor.value);
-            updateDirtyIndicator(true);
-            autoSaveCurrentFile();
-            alert(`Replaced ${matches} instance(s).`);
-        }
-    });
-
-    bindClick("saveLocalBtn", function () {
-        saveCurrentFile(true);
-    });
-
-    bindClick("newFileBtn", function () {
-        const defaultPath = selectedFolderPath ? `${selectedFolderPath}/` : "";
-        const name = prompt("Enter file path:", defaultPath);
-        if (!name || name.trim() === "" || name.endsWith("/")) return;
-
-        saveFileToDb(name.trim(), "").then(() => {
-            loadFiles();
-            openFile(name.trim());
-        });
-    });
-
-    bindClick("pushGitHubBtn", async function () {
-        const tokenInput = document.getElementById("tokenInput");
-        const repoSelect = document.getElementById("repoSelect");
-        const branchSelect = document.getElementById("branchSelect");
-
-        const token = tokenInput ? tokenInput.value.trim() : "";
-        const repo = repoSelect ? repoSelect.value : "";
-        const branch = (branchSelect && branchSelect.value) ? branchSelect.value : "main";
-        const name = editor ? editor.dataset.filename : "";
-        const content = editor ? editor.value : "";
-
-        if (!token || !repo || !name) {
-            return alert("Please select an active file and ensure GitHub credentials are configured.");
-        }
-
-        const confirmMsg = `⚠️ GITHUB PUSH WARNING\n\nYou are about to overwrite/push:\n• File: ${name}\n• Repository: ${repo}\n• Branch: ${branch}\n\nDo you want to proceed?`;
-        if (!confirm(confirmMsg)) return;
-
-        try {
-            await pushFileToGitHub(name, content, token, repo, branch);
-            alert(`Successfully pushed "${name}" to ${repo} (${branch})!`);
-        } catch (err) {
-            alert("Push failed: " + err.message);
-        }
-    });
-
-    bindClick("pushAllGitHubBtn", async function () {
-        const tokenInput = document.getElementById("tokenInput");
-        const repoSelect = document.getElementById("repoSelect");
-        const branchSelect = document.getElementById("branchSelect");
-
-        const token = tokenInput ? tokenInput.value.trim() : "";
-        const repo = repoSelect ? repoSelect.value : "";
-        const branch = (branchSelect && branchSelect.value) ? branchSelect.value : "main";
-
-        if (!token || !repo) {
-            return alert("Please configure your GitHub credentials and select a repository first.");
-        }
-
-        const confirmMsg = `⚠️ GITHUB PUSH ALL WARNING\n\nYou are about to push ALL workspace files to:\n• Repository: ${repo}\n• Branch: ${branch}\n\nDo you want to proceed?`;
-        if (!confirm(confirmMsg)) return;
-
-        const tx = db.transaction("files", "readonly");
-        const store = tx.objectStore("files");
-        const req = store.getAll();
-
-        req.onsuccess = async function () {
-            const files = req.result;
-            if (files.length === 0) return alert("No local files to push.");
-
-            let success = 0;
-            for (const file of files) {
-                try {
-                    await pushFileToGitHub(file.name, file.content, token, repo, branch);
-                    success++;
-                } catch (err) {
-                    console.error(`Failed to push ${file.name}:`, err);
-                }
-            }
-            alert(`Successfully pushed ${success} of ${files.length} files to ${repo} (${branch})!`);
-        };
-    });
-}
-
-function saveCurrentFile(showAlert = false) {
-    const editor = document.getElementById("editor");
-    if (!editor) return;
-    const name = editor.dataset.filename;
-    if (!name) {
-        if (showAlert) alert("Select a file first.");
-        return;
-    }
-
-    if (showAlert) {
-        if (!confirm(`Save changes to local database for "${name}"?`)) return;
-    }
-
-    saveFileToDb(name, editor.value).then(() => {
-        updateDirtyIndicator(false);
-        if (showAlert) alert("Saved locally!");
-    });
-}
-
-let autoSaveTimeout;
-function autoSaveCurrentFile() {
-    clearTimeout(autoSaveTimeout);
-    autoSaveTimeout = setTimeout(() => {
-        saveCurrentFile(false);
-    }, 1000);
-}
-
-function updateLineNumbers() {
-    const editor = document.getElementById("editor");
-    const lineNumbers = document.getElementById("lineNumbers");
-    if (!editor || !lineNumbers) return;
-
-    const lines = editor.value.split("\n").length;
-    let numbersArr = [];
-    for (let i = 1; i <= lines; i++) {
-        numbersArr.push(i);
-    }
-    lineNumbers.textContent = numbersArr.join("\n");
-}
-
-function updateHighlights() {
-    const editor = document.getElementById("editor");
-    const highlightCode = document.getElementById("highlightCode");
-    const highlightLayer = document.getElementById("highlightLayer");
-    const searchInput = document.getElementById("searchInput");
-    const searchBar = document.getElementById("searchReplaceBar");
-
-    if (!editor) return;
-
-    let text = editor.value;
-    const filename = editor.dataset.filename || "";
-    
-    if (text.endsWith("\n")) {
-        text += " ";
-    }
-
-    const searchVal = searchInput ? searchInput.value : "";
-    const isSearchActive = searchVal && searchBar && !searchBar.classList.contains("hidden");
-
-    if (highlightCode) {
-        const ext = filename.split('.').pop().toLowerCase();
-        const langMap = { js: 'javascript', ts: 'typescript', py: 'python', md: 'markdown', html: 'markup', css: 'css', json: 'json' };
-        const lang = langMap[ext] || 'plaintext';
-
-        if (window.Prism && Prism.languages[lang]) {
-            let highlighted = Prism.highlight(text, Prism.languages[lang], lang);
-            if (isSearchActive) {
-                const escapedSearch = escapeHtml(searchVal);
-                const regex = new RegExp(`(${escapeRegExp(escapedSearch)})`, "gi");
-                highlighted = highlighted.replace(regex, `<mark class="search-highlight">$1</mark>`);
-            }
-            highlightCode.innerHTML = highlighted;
-            return;
-        }
-    }
-
-    let renderedText = applySyntaxHighlighting(text, filename);
-
-    if (isSearchActive) {
-        const escapedSearch = escapeHtml(searchVal);
-        const regex = new RegExp(`(${escapeRegExp(escapedSearch)})`, "gi");
-        renderedText = renderedText.replace(regex, `<mark class="search-highlight">$1</mark>`);
-    }
-
-    if (highlightCode) {
-        highlightCode.innerHTML = renderedText;
-    } else if (highlightLayer) {
-        highlightLayer.innerHTML = renderedText;
-    }
-}
-
-function updateBreadcrumbs(filePath) {
-    const container = document.getElementById("breadcrumbBar");
-    if (!container) return;
-    container.innerHTML = "";
-
-    if (!filePath) {
-        container.innerHTML = `<span class="breadcrumb-item">Workspace</span>`;
-        return;
-    }
-
-    const parts = filePath.split('/');
-    let cumulative = "";
-
-    const rootItem = document.createElement("span");
-    rootItem.className = "breadcrumb-item";
-    rootItem.textContent = "Workspace";
-    rootItem.onclick = () => loadFiles();
-    container.appendChild(rootItem);
-
-    parts.forEach((part, index) => {
-        const sep = document.createElement("span");
-        sep.className = "breadcrumb-separator";
-        sep.textContent = " / ";
-        container.appendChild(sep);
-
-        cumulative += (index === 0 ? "" : "/") + part;
-        const item = document.createElement("span");
-        item.className = "breadcrumb-item";
-        item.textContent = part;
-
-        if (index === parts.length - 1) {
-            item.style.color = "#d4d4d4";
-        } else {
-            const pathCopy = cumulative;
-            item.onclick = () => selectFolderByPath(pathCopy);
-        }
-        container.appendChild(item);
-    });
-}
-
-function selectFolderByPath(path) {
-    selectedFolderPath = path;
-    switchTab('explorer');
-    loadFiles();
-}
-// #endregion
-
-// #region Dual Split Panes
-function toggleSplitPane() {
-    const pane = document.getElementById("secondaryPane");
-    if (!pane) return;
-
-    const isHidden = pane.classList.toggle("hidden");
-    const btn = document.getElementById("splitPaneBtn");
-    if (btn) btn.textContent = isHidden ? "▥ Split" : "✕ Single";
-
-    if (!isHidden && !secondaryPaneFileName) {
-        const mainEditor = document.getElementById("editor");
-        if (mainEditor && mainEditor.dataset.filename) {
-            openSecondaryPaneFile(mainEditor.dataset.filename);
-        }
-    }
-}
-
-function openSecondaryPaneFile(name) {
-    if (!db) return;
-    const tx = db.transaction("files", "readonly");
-    const store = tx.objectStore("files");
-    const req = store.get(name);
-
-    req.onsuccess = function () {
-        const view = document.getElementById("secondaryEditorView");
-        const title = document.getElementById("secondaryPaneTitle");
-        if (!view) return;
-
-        let rawContent = req.result ? req.result.content : "";
-        if (typeof rawContent === "string" && rawContent.startsWith("data:application/octet-stream;base64,")) {
-            rawContent = decodeBase64Text(rawContent);
-        }
-
-        view.value = rawContent;
-        secondaryPaneFileName = name;
-        if (title) title.textContent = name;
-        
-        const secCode = document.getElementById("secondaryHighlightCode");
-        if (secCode) secCode.textContent = rawContent;
-    };
-}
-// #endregion
-
-// #region Universal File & Directory Rendering
-function loadFiles() {
-    if (!db) return;
-    const tx = db.transaction("files", "readonly");
-    const store = tx.objectStore("files");
-    const req = store.getAll();
-
-    req.onsuccess = function () {
-        const files = req.result;
-        const itemCount = document.getElementById("itemCount");
-        if (itemCount) itemCount.textContent = `${files.length} items`;
-        
-        const treeRoot = buildFileTreeStructure(files);
-        const container = document.getElementById("fileTree");
-        if (container) {
-            container.innerHTML = "";
-            renderTree(treeRoot, container, "");
-        }
-    };
-}
-
-function buildFileTreeStructure(files) {
-    const root = {};
-    files.forEach(file => {
-        const parts = file.name.split('/');
-        let current = root;
-        parts.forEach((part, index) => {
-            if (index === parts.length - 1) {
-                current[part] = { _isFile: true, fullPath: file.name };
-            } else {
-                if (!current[part]) current[part] = { _isFile: false, _children: {} };
-                current = current[part]._children;
-            }
-        });
-    });
-    return root;
-}
-
-function renderTree(node, container, currentFolderPath) {
-    for (const key in node) {
-        const item = node[key];
-        const treeNode = document.createElement("div");
-        treeNode.className = "tree-node";
-
-        if (item._isFile) {
-            const ext = key.split('.').pop().toLowerCase();
-            let icon = "📄";
-            
-            if (["html", "htm", "vue", "svelte", "astro"].includes(ext)) icon = "🌐";
-            else if (["css", "scss", "sass", "less"].includes(ext)) icon = "🎨";
-            else if (["js", "ts", "jsx", "tsx", "mjs", "cjs", "json"].includes(ext)) icon = "⚡";
-            else if (["py", "cpp", "c", "h", "hpp", "cs", "java", "rs", "go", "swift", "kt"].includes(ext)) icon = "⚙️";
-            else if (["md", "txt", "log"].includes(ext)) icon = "📝";
-            else if (["sql", "db"].includes(ext)) icon = "🗄️";
-
-            treeNode.innerHTML = `
-                <div class="tree-row" draggable="true" data-path="${item.fullPath}">
-                    <span class="tree-label" onclick="openFile('${item.fullPath}')">${icon} ${key}</span>
-                    <span style="display:flex; gap:4px; align-items:center;">
-                        <span class="delete-icon" title="View in Split Side Pane" onclick="openSecondaryPaneFile('${item.fullPath}')">▥</span>
-                        <span class="delete-icon" onclick="deleteFile('${item.fullPath}')">✕</span>
-                    </span>
-                </div>
-            `;
-
-            const row = treeNode.querySelector('.tree-row');
-            row.ondragstart = (e) => {
-                e.dataTransfer.setData("text/plain", item.fullPath);
-            };
-        } else {
-            const folderPath = currentFolderPath ? `${currentFolderPath}/${key}` : key;
-            const childrenContainer = document.createElement("div");
-            childrenContainer.className = "tree-children";
-            childrenContainer.style.display = "none";
-
-            const isSelected = selectedFolderPath === folderPath;
-
-            treeNode.innerHTML = `
-                <div class="tree-row ${isSelected ? 'selected-folder' : ''}" data-folder="${folderPath}">
-                    <span class="tree-label" onclick="selectFolder(this, '${folderPath}')">📁 <strong>${key}</strong></span>
-                    <span class="delete-icon" title="Delete Folder" onclick="deleteFolder('${folderPath}')">🗑️</span>
-                </div>
-            `;
-
-            const row = treeNode.querySelector('.tree-row');
-
-            row.ondragover = (e) => {
-                e.preventDefault();
-                row.classList.add('drag-over');
-            };
-
-            row.ondragleave = () => {
-                row.classList.remove('drag-over');
-            };
-
-            row.ondrop = async (e) => {
-                e.preventDefault();
-                row.classList.remove('drag-over');
-                const sourcePath = e.dataTransfer.getData("text/plain");
-                if (sourcePath) {
-                    await moveFileToFolder(sourcePath, folderPath);
-                }
-            };
-
-            renderTree(item._children, childrenContainer, folderPath);
-            treeNode.appendChild(childrenContainer);
-        }
-        container.appendChild(treeNode);
-    }
-}
-
-function selectFolder(labelElement, folderPath) {
-    if (selectedFolderPath === folderPath) {
-        selectedFolderPath = "";
-    } else {
-        selectedFolderPath = folderPath;
-    }
-    toggleFolder(labelElement);
-    loadFiles();
-}
-
-function toggleFolder(labelElement) {
-    const rowElement = labelElement.parentElement;
-    const children = rowElement.nextElementSibling;
-    if (children) {
-        const isHidden = children.style.display === "none";
-        children.style.display = isHidden ? "block" : "none";
-        labelElement.innerHTML = labelElement.innerHTML.replace(isHidden ? "📁" : "📂", isHidden ? "📂" : "📁");
-    }
-}
-
-async function moveFileToFolder(filePath, targetFolderPath) {
-    const fileName = filePath.split('/').pop();
-    const newPath = `${targetFolderPath}/${fileName}`;
-    if (filePath === newPath) return;
-
-    const tx = db.transaction("files", "readwrite");
-    const store = tx.objectStore("files");
-    const req = store.get(filePath);
-
-    req.onsuccess = function() {
-        if (req.result) {
-            const content = req.result.content;
-            store.delete(filePath);
-            store.put({ name: newPath, content });
-        }
-    };
-
-    tx.oncomplete = () => {
-        const editor = document.getElementById("editor");
-        if (editor && editor.dataset.filename === filePath) {
-            editor.dataset.filename = newPath;
-            const label = document.getElementById("activeFileLabel");
-            if (label) label.textContent = "Editing: " + newPath;
-            updateBreadcrumbs(newPath);
-        }
-        loadFiles();
-    };
-}
-// #endregion
-
-// #region Multi-Format File Import Logic
-const uploadInputEl = document.getElementById("uploadInput");
-if (uploadInputEl) {
-    uploadInputEl.onchange = async function (event) {
-        const files = event.target.files;
-        if (!files || files.length === 0) return;
-
-        for (const file of files) {
-            if (file.name.toLowerCase().endsWith(".zip")) {
-                await unpackZip(file);
-            } else {
-                await importRegularFile(file);
-            }
-        }
-
-        loadFiles();
-        event.target.value = "";
-    };
-}
-
-async function importRegularFile(file) {
-    const destPath = selectedFolderPath ? `${selectedFolderPath}/${file.name}` : file.name;
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = function () {
-            let content = reader.result;
-            if (typeof content !== "string" || !isTextContent(content)) {
-                const base64Reader = new FileReader();
-                base64Reader.onload = function () {
-                    saveFileToDb(destPath, base64Reader.result).then(resolve);
-                };
-                base64Reader.readAsDataURL(file);
-            } else {
-                saveFileToDb(destPath, content).then(resolve);
-            }
-        };
-        reader.onerror = reject;
-        reader.readAsText(file);
-    });
-}
-
-function saveFileToDb(name, content) {
-    return new Promise((resolve) => {
-        const tx = db.transaction("files", "readwrite");
-        const store = tx.objectStore("files");
-        store.put({ name, content });
-        tx.oncomplete = resolve;
-    });
-}
-
-function readFileAsArrayBuffer(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(reader.error);
-        reader.readAsArrayBuffer(file);
-    });
-}
-
-async function unpackZip(zipFile) {
-    try {
-        if (typeof JSZip === "undefined") throw new Error("JSZip library not loaded.");
-
-        const buffer = await readFileAsArrayBuffer(zipFile);
-        const zip = await JSZip.loadAsync(buffer);
-        const extractedFiles = [];
-
-        for (const path in zip.files) {
-            const entry = zip.files[path];
-            if (entry.dir) continue;
-
-            const normalizedName = entry.name.toLowerCase();
-            const isText = EXTENSION_REGEX.test(normalizedName);
-            let content;
-
-            if (isText) {
-                content = await entry.async("string");
-            } else {
-                const str = await entry.async("string");
-                if (isTextContent(str)) {
-                    content = str;
-                } else {
-                    const base64 = await entry.async("base64");
-                    content = "data:application/octet-stream;base64," + base64;
-                }
-            }
-
-            const targetPath = selectedFolderPath ? `${selectedFolderPath}/${entry.name}` : entry.name;
-            extractedFiles.push({ name: targetPath, content });
-        }
-
-        const tx = db.transaction("files", "readwrite");
-        const store = tx.objectStore("files");
-        for (const item of extractedFiles) {
-            store.put(item);
-        }
-
-        return new Promise((resolve, reject) => {
-            tx.oncomplete = () => resolve();
-            tx.onerror = (err) => reject(err);
-        });
-
-    } catch (err) {
-        alert("ZIP unpack error: " + err.message);
-    }
-}
-// #endregion
-
-// #region File Workspace Operations
-function openFile(name) {
-    const tx = db.transaction("files", "readonly");
-    const store = tx.objectStore("files");
-    const req = store.get(name);
-
-    req.onsuccess = function () {
-        const editor = document.getElementById("editor");
-        if (!editor) return;
-
-        let rawContent = req.result ? req.result.content : "";
-
-        if (typeof rawContent === "string" && rawContent.startsWith("data:application/octet-stream;base64,")) {
-            rawContent = decodeBase64Text(rawContent);
-        }
-
-        editor.value = rawContent;
-        editor.dataset.filename = name;
-        const label = document.getElementById("activeFileLabel");
-        if (label) label.textContent = "Editing: " + name;
-
-        lastSearchIndex = 0;
-        updateLineNumbers();
-        updateHighlights();
-        renderCodeBlockNav(rawContent);
-        updateBreadcrumbs(name);
-        updateDirtyIndicator(false);
-
-        switchTab('editor');
-    };
-}
-
-function deleteFile(name) {
-    if (!confirm(`Delete ${name}?`)) return;
-    const tx = db.transaction("files", "readwrite");
-    const store = tx.objectStore("files");
-    store.delete(name);
-    tx.oncomplete = () => {
-        const editor = document.getElementById("editor");
-        if (editor && editor.dataset.filename === name) {
-            editor.value = "";
-            editor.dataset.filename = "";
-            const label = document.getElementById("activeFileLabel");
-            if (label) label.textContent = "No file selected";
-            updateLineNumbers();
-            updateHighlights();
-            renderCodeBlockNav("");
-            updateBreadcrumbs("");
-            updateDirtyIndicator(false);
-        }
-        loadFiles();
-    };
-}
-
-function deleteFolder(folderPath) {
-    if (!confirm(`Delete folder "${folderPath}" and all contained files?`)) return;
-
-    const tx = db.transaction("files", "readwrite");
-    const store = tx.objectStore("files");
-    const req = store.getAllKeys();
-
-    req.onsuccess = function () {
-        const keys = req.result;
-        const prefix = folderPath + "/";
-        const editor = document.getElementById("editor");
-
-        keys.forEach(key => {
-            if (key === folderPath || key.startsWith(prefix)) {
-                store.delete(key);
-                if (editor && editor.dataset.filename === key) {
-                    editor.value = "";
-                    editor.dataset.filename = "";
-                    const label = document.getElementById("activeFileLabel");
-                    if (label) label.textContent = "No file selected";
-                }
-            }
-        });
-
-        tx.oncomplete = () => {
-            if (selectedFolderPath === folderPath) selectedFolderPath = "";
-            updateLineNumbers();
-            updateHighlights();
-            renderCodeBlockNav("");
-            updateBreadcrumbs("");
-            updateDirtyIndicator(false);
-            loadFiles();
-        };
-    };
-}
-// #endregion
+async function pushCurrentToGitHub(){const e=$("editor"),path=e?.dataset.filename,token=$("tokenInput")?.value.trim(),repo=$("repoSelect")?.value,branch=$("branchSelect")?.value||"main";if(!path||!token||!repo)return alert("Select a file and configure GitHub first.");if(!confirm(`Push ${path} to ${repo} (${branch})?`))return;try{await saveCurrentFile(false);const f=await getFile(path);await pushFileToGitHub(path,f.content,token,repo,branch,f.type,f.mime);updateDirtyIndicator(false);alert(`Successfully pushed ${path}.`);}catch(e){alert("Push failed: "+e.message);}}
+async function pushAllToGitHub(){const token=$("tokenInput")?.value.trim(),repo=$("repoSelect")?.value,branch=$("branchSelect")?.value||"main";if(!token||!repo)return alert("Configure GitHub first.");const files=await getAllFiles();if(!files.length)return alert("Workspace is empty.");if(!confirm(`Push all ${files.length} files to ${repo} (${branch})?`))return;let ok=0;const failures=[];for(const f of files){try{await pushFileToGitHub(f.path,f.content,token,repo,branch,f.type,f.mime);ok++;}catch(e){failures.push(`${f.path}: ${e.message}`);}}alert(`Pushed ${ok}/${files.length} files.${failures.length?"\n\nFailed:\n"+failures.slice(0,8).join("\n"):""}`);}
+function restoreSettings(){const token=localStorage.getItem("gh_token")||"";if($("tokenInput"))$("tokenInput").value=token;if(token)fetchGitHubRepos(token);const theme=localStorage.getItem("editor_theme")||"dark";if($("themeSelect")){ $("themeSelect").value=theme;applyTheme(theme);$("themeSelect").addEventListener("change",e=>{applyTheme(e.target.value);localStorage.setItem("editor_theme",e.target.value);});}}
+function applyTheme(theme){document.body.classList.remove("theme-light","theme-monokai");if(theme==="light")document.body.classList.add("theme-light");if(theme==="monokai")document.body.classList.add("theme-monokai");}
+
+window.addEventListener("beforeunload",e=>{if(isDirty){e.preventDefault();e.returnValue="";}});
+document.addEventListener("DOMContentLoaded",async()=>{try{await openDatabase();bindUI();restoreSettings();await loadFiles();updateBreadcrumbs("");}catch(e){console.error(e);alert("Workspace startup failed: "+e.message);}});
