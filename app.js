@@ -49,6 +49,7 @@ function decodeBase64Text(base64Str) {
 document.addEventListener("DOMContentLoaded", function () {
     initDatabase();
     bindUIEvents();
+    bindGitHubEvents();
 });
 
 function initDatabase() {
@@ -69,22 +70,152 @@ function initDatabase() {
 }
 
 function restoreSettings() {
-    document.getElementById("tokenInput").value = localStorage.getItem("gh_token") || "";
-    document.getElementById("repoInput").value = localStorage.getItem("gh_repo") || "";
-    document.getElementById("branchInput").value = localStorage.getItem("gh_branch") || "main";
-    const aiInput = document.getElementById("aiTokenInput");
-    if (aiInput) {
-        aiInput.value = localStorage.getItem("openai_key") || "";
+    const token = localStorage.getItem("gh_token") || "";
+    document.getElementById("tokenInput").value = token;
+    
+    if (token) {
+        fetchGitHubRepos(token);
     }
 }
 
 document.getElementById("tokenInput").addEventListener("input", e => localStorage.setItem("gh_token", e.target.value.trim()));
-document.getElementById("repoInput").addEventListener("input", e => localStorage.setItem("gh_repo", e.target.value.trim()));
-document.getElementById("branchInput").addEventListener("input", e => localStorage.setItem("gh_branch", e.target.value.trim()));
 
-const aiTokenElem = document.getElementById("aiTokenInput");
-if (aiTokenElem) {
-    aiTokenElem.addEventListener("input", e => localStorage.setItem("openai_key", e.target.value.trim()));
+// ---------------------------
+// Dynamic GitHub Repos & Branches Setup
+// ---------------------------
+function bindGitHubEvents() {
+    bindClick("connectGhBtn", function() {
+        const token = document.getElementById("tokenInput").value.trim();
+        if (!token) return alert("Please enter a valid GitHub PAT first.");
+        fetchGitHubRepos(token);
+    });
+
+    const repoSelect = document.getElementById("repoSelect");
+    if (repoSelect) {
+        repoSelect.addEventListener("change", function() {
+            const selectedRepo = this.value;
+            localStorage.setItem("gh_repo", selectedRepo);
+            if (selectedRepo) {
+                const token = document.getElementById("tokenInput").value.trim();
+                fetchGitHubBranches(token, selectedRepo);
+                if (confirm(`Fetch and import files from repository "${selectedRepo}" into your local workspace?`)) {
+                    importRepoFromGitHub(token, selectedRepo);
+                }
+            }
+        });
+    }
+
+    const branchSelect = document.getElementById("branchSelect");
+    if (branchSelect) {
+        branchSelect.addEventListener("change", function() {
+            localStorage.setItem("gh_branch", this.value);
+        });
+    }
+}
+
+async function fetchGitHubRepos(token) {
+    const repoSelect = document.getElementById("repoSelect");
+    repoSelect.innerHTML = '<option value="">Loading repositories...</option>';
+
+    try {
+        const res = await fetch("https://api.github.com/user/repos?per_page=100&sort=updated", {
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Accept": "application/vnd.github.v3+json"
+            }
+        });
+
+        if (!res.ok) throw new Error("Authentication failed or invalid token.");
+
+        const repos = await res.json();
+        repoSelect.innerHTML = '<option value="">-- Choose Repository --</option>';
+
+        const savedRepo = localStorage.getItem("gh_repo");
+        repos.forEach(repo => {
+            const opt = document.createElement("option");
+            opt.value = repo.full_name;
+            opt.textContent = repo.full_name;
+            if (savedRepo && repo.full_name === savedRepo) opt.selected = true;
+            repoSelect.appendChild(opt);
+        });
+
+        if (savedRepo) {
+            fetchGitHubBranches(token, savedRepo);
+        }
+    } catch (err) {
+        repoSelect.innerHTML = '<option value="">Failed to load repos</option>';
+        alert("GitHub API Error: " + err.message);
+    }
+}
+
+async function fetchGitHubBranches(token, repo) {
+    const branchSelect = document.getElementById("branchSelect");
+    branchSelect.innerHTML = '<option value="">Loading branches...</option>';
+
+    try {
+        const res = await fetch(`https://api.github.com/repos/${repo}/branches`, {
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Accept": "application/vnd.github.v3+json"
+            }
+        });
+
+        if (!res.ok) throw new Error("Could not fetch branches.");
+
+        const branches = await res.json();
+        branchSelect.innerHTML = '';
+
+        const savedBranch = localStorage.getItem("gh_branch");
+        branches.forEach(branch => {
+            const opt = document.createElement("option");
+            opt.value = branch.name;
+            opt.textContent = branch.name;
+            if ((savedBranch && branch.name === savedBranch) || (!savedBranch && (branch.name === "main" || branch.name === "master"))) {
+                opt.selected = true;
+            }
+            branchSelect.appendChild(opt);
+        });
+    } catch (err) {
+        branchSelect.innerHTML = '<option value="">Failed to load branches</option>';
+    }
+}
+
+async function importRepoFromGitHub(token, repo) {
+    const branch = document.getElementById("branchSelect").value || "main";
+    try {
+        const res = await fetch(`https://api.github.com/repos/${repo}/git/trees/${branch}?recursive=1`, {
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Accept": "application/vnd.github.v3+json"
+            }
+        });
+
+        if (!res.ok) throw new Error("Unable to fetch repository file tree.");
+
+        const data = await res.json();
+        const filesToFetch = data.tree.filter(item => item.type === "blob");
+
+        let imported = 0;
+        for (const file of filesToFetch) {
+            const fileRes = await fetch(file.url, {
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                    "Accept": "application/vnd.github.v3.raw"
+                }
+            });
+
+            if (fileRes.ok) {
+                const text = await fileRes.text();
+                await saveFileToDb(file.path, text);
+                imported++;
+            }
+        }
+
+        loadFiles();
+        alert(`Successfully imported ${imported} file(s) from GitHub!`);
+    } catch (err) {
+        alert("Repository Import Failed: " + err.message);
+    }
 }
 
 // ---------------------------
@@ -96,10 +227,30 @@ function bindUIEvents() {
     const lineNumbers = document.getElementById("lineNumbers");
     const searchInput = document.getElementById("searchInput");
 
-    // Sync input changes across Line Numbers & Background Highlights
+    // Sync input changes across Line Numbers & Background Highlights + Auto-Save
     editor.addEventListener("input", function () {
         updateLineNumbers();
         updateHighlights();
+        autoSaveCurrentFile();
+    });
+
+    // Code Editor Shortcuts: Support Tab indentation & Save hotkey
+    editor.addEventListener("keydown", function (e) {
+        if (e.key === "Tab") {
+            e.preventDefault();
+            const start = this.selectionStart;
+            const end = this.selectionEnd;
+
+            this.value = this.value.substring(0, start) + "    " + this.value.substring(end);
+            this.selectionStart = this.selectionEnd = start + 4;
+            updateLineNumbers();
+            updateHighlights();
+        }
+
+        if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+            e.preventDefault();
+            saveCurrentFile();
+        }
     });
 
     // Sync horizontal/vertical scrolling across all three layers
@@ -115,63 +266,6 @@ function bindUIEvents() {
     if (searchInput) {
         searchInput.addEventListener("input", updateHighlights);
     }
-
-    bindClick("aiAssistBtn", async function () {
-        const apiKey = localStorage.getItem("openai_key");
-        if (!apiKey) return alert("Please set your OpenAI API Key in Settings first.");
-
-        const code = editor.value;
-        if (!code) return alert("Open a file or write some code first!");
-
-        const userPrompt = prompt("What would you like AI to do with this code?", "Fix bugs and improve formatting");
-        if (!userPrompt) return;
-
-        const aiBtn = document.getElementById("aiAssistBtn");
-        const originalText = aiBtn.textContent;
-        aiBtn.textContent = "⏳ Thinking...";
-        aiBtn.disabled = true;
-
-        try {
-            const response = await fetch("https://api.openai.com/v1/chat/completions", {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${apiKey}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    model: "gpt-4o-mini",
-                    messages: [
-                        {
-                            role: "system",
-                            content: "You are an expert coding assistant integrated into a mobile code editor. Return ONLY the code response inside raw text unless asked otherwise."
-                        },
-                        {
-                            role: "user",
-                            content: `${userPrompt}\n\nHere is the code:\n\`\`\`\n${code}\n\`\`\``
-                        }
-                    ],
-                    temperature: 0.2
-                })
-            });
-
-            const data = await response.json();
-            if (data.error) throw new Error(data.error.message);
-
-            const aiOutput = data.choices[0].message.content;
-
-            if (confirm("Replace current editor code with AI response?")) {
-                const cleanCode = aiOutput.replace(/^```[a-z]*\n/i, "").replace(/\n```$/, "");
-                editor.value = cleanCode;
-                updateLineNumbers();
-                updateHighlights();
-            }
-        } catch (err) {
-            alert("AI Request Failed: " + err.message);
-        } finally {
-            aiBtn.textContent = originalText;
-            aiBtn.disabled = false;
-        }
-    });
 
     bindClick("closeFileBtn", function () {
         editor.value = "";
@@ -243,6 +337,7 @@ function bindUIEvents() {
             editor.value = text.replace(searchVal, replaceVal);
             updateLineNumbers();
             updateHighlights();
+            autoSaveCurrentFile();
         }
     });
 
@@ -264,48 +359,37 @@ function bindUIEvents() {
             editor.value = editor.value.replace(regex, replaceVal);
             updateLineNumbers();
             updateHighlights();
+            autoSaveCurrentFile();
             alert(`Replaced ${matches} instance(s).`);
         }
     });
 
     bindClick("saveLocalBtn", function () {
-        const name = editor.dataset.filename;
-        if (!name) return alert("Select a file first.");
-
-        const content = editor.value;
-        const tx = db.transaction("files", "readwrite");
-        const store = tx.objectStore("files");
-        store.put({ name, content });
-
-        tx.oncomplete = () => alert("Saved!");
+        saveCurrentFile(true);
     });
 
     bindClick("newFileBtn", function () {
         const name = prompt("Enter file path (e.g., src/components/App.tsx):");
         if (!name) return;
 
-        const tx = db.transaction("files", "readwrite");
-        const store = tx.objectStore("files");
-        store.put({ name, content: "" });
-
-        tx.oncomplete = () => {
+        saveFileToDb(name, "").then(() => {
             loadFiles();
             openFile(name);
-        };
+        });
     });
 
     bindClick("pushGitHubBtn", async function () {
         const token = document.getElementById("tokenInput").value.trim();
-        const repo = document.getElementById("repoInput").value.trim();
-        const branch = document.getElementById("branchInput").value.trim();
+        const repo = document.getElementById("repoSelect").value;
+        const branch = document.getElementById("branchSelect").value;
         const name = editor.dataset.filename;
         const content = editor.value;
 
-        if (!token || !repo || !name) return alert("Select a file & fill GitHub credentials.");
+        if (!token || !repo || !name) return alert("Select a file & specify GitHub credentials.");
 
         try {
             await pushFileToGitHub(name, content, token, repo, branch);
-            alert(`Pushed ${name}!`);
+            alert(`Pushed ${name} successfully!`);
         } catch (err) {
             alert("Push failed: " + err.message);
         }
@@ -313,10 +397,10 @@ function bindUIEvents() {
 
     bindClick("pushAllGitHubBtn", async function () {
         const token = document.getElementById("tokenInput").value.trim();
-        const repo = document.getElementById("repoInput").value.trim();
-        const branch = document.getElementById("branchInput").value.trim();
+        const repo = document.getElementById("repoSelect").value;
+        const branch = document.getElementById("branchSelect").value;
 
-        if (!token || !repo) return alert("Fill GitHub credentials.");
+        if (!token || !repo) return alert("Configure GitHub credentials first.");
 
         const tx = db.transaction("files", "readonly");
         const store = tx.objectStore("files");
@@ -338,6 +422,27 @@ function bindUIEvents() {
             alert(`Pushed ${success} of ${files.length} files!`);
         };
     });
+}
+
+function saveCurrentFile(showAlert = false) {
+    const editor = document.getElementById("editor");
+    const name = editor.dataset.filename;
+    if (!name) {
+        if (showAlert) alert("Select a file first.");
+        return;
+    }
+
+    saveFileToDb(name, editor.value).then(() => {
+        if (showAlert) alert("Saved locally!");
+    });
+}
+
+let autoSaveTimeout;
+function autoSaveCurrentFile() {
+    clearTimeout(autoSaveTimeout);
+    autoSaveTimeout = setTimeout(() => {
+        saveCurrentFile(false);
+    }, 1000);
 }
 
 function escapeHtml(text) {
