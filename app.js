@@ -2,6 +2,7 @@
 const EXTENSION_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|html|htm|md|xml|cfg|ini|lua|py|cpp|c|h|hpp|cs|java|go|rs|php|rb|sh|bat|ps1|sql|yaml|yml|toml|env|gitignore|properties|log|swift|kt|kts|dart|r|m|mm|vue|svelte|astro|graphql|gql|prisma|diff|patch|dockerfile|makefile)$/i;
 
 let db;
+let dbReadyPromise = null;
 let lastSearchIndex = 0;
 let selectedFolderPath = ""; 
 let secondaryPaneFileName = ""; 
@@ -106,7 +107,12 @@ function updateDirtyIndicator(dirty) {
 
 // #region Application Initialization
 document.addEventListener("DOMContentLoaded", function () {
-    initDatabase();
+    // Start opening IndexedDB immediately, but do not assume Safari has finished
+    // opening it before the user can tap GitHub/Import controls.
+    initDatabase().catch(err => {
+        console.error("IndexedDB initialization failed:", err);
+        alert("Local workspace storage could not be opened: " + err.message);
+    });
     bindUIEvents();
     bindGitHubEvents();
     initSymbolBar();
@@ -115,20 +121,67 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 function initDatabase() {
-    const request = indexedDB.open("LocalWorkspaceDB", 3);
+    if (db) return Promise.resolve(db);
+    if (dbReadyPromise) return dbReadyPromise;
 
-    request.onupgradeneeded = function (event) {
-        db = event.target.result;
-        if (!db.objectStoreNames.contains("files")) {
-            db.createObjectStore("files", { keyPath: "name" });
+    dbReadyPromise = new Promise((resolve, reject) => {
+        if (!window.indexedDB) {
+            reject(new Error("IndexedDB is not available in this browser/session."));
+            return;
         }
-    };
 
-    request.onsuccess = function (event) {
-        db = event.target.result;
-        loadFiles();
-        restoreSettings();
-    };
+        let settled = false;
+        const request = indexedDB.open("LocalWorkspaceDB", 3);
+
+        request.onupgradeneeded = function (event) {
+            const openedDb = event.target.result;
+            if (!openedDb.objectStoreNames.contains("files")) {
+                openedDb.createObjectStore("files", { keyPath: "name" });
+            }
+        };
+
+        request.onsuccess = function (event) {
+            db = event.target.result;
+            settled = true;
+
+            db.onversionchange = function () {
+                db.close();
+                db = undefined;
+                dbReadyPromise = null;
+            };
+
+            loadFiles();
+            restoreSettings();
+            resolve(db);
+        };
+
+        request.onerror = function () {
+            dbReadyPromise = null;
+            reject(request.error || new Error("IndexedDB failed to open."));
+        };
+
+        request.onblocked = function () {
+            console.warn("IndexedDB open is blocked by another tab/session.");
+            // Do not reject immediately; Safari can unblock this once the old
+            // connection is released. If it later succeeds, onsuccess resolves.
+        };
+
+        // Safari can occasionally leave an IndexedDB request pending for an
+        // unusually long time. Give the user a useful error instead of a later
+        // `db.transaction` crash.
+        setTimeout(() => {
+            if (!settled && !db) {
+                console.warn("IndexedDB is still waiting to open.");
+            }
+        }, 5000);
+    });
+
+    return dbReadyPromise;
+}
+
+async function getDatabase() {
+    if (db) return db;
+    return initDatabase();
 }
 
 function restoreSettings() {
@@ -1321,12 +1374,22 @@ async function importRegularFile(file) {
     });
 }
 
-function saveFileToDb(name, content) {
-    return new Promise((resolve) => {
-        const tx = db.transaction("files", "readwrite");
-        const store = tx.objectStore("files");
-        store.put({ name, content });
-        tx.oncomplete = resolve;
+async function saveFileToDb(name, content) {
+    const database = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+        let tx;
+        try {
+            tx = database.transaction("files", "readwrite");
+            tx.objectStore("files").put({ name, content });
+        } catch (err) {
+            reject(err);
+            return;
+        }
+
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error(`Could not save "${name}" to the local workspace.`));
+        tx.onabort = () => reject(tx.error || new Error(`Saving "${name}" was aborted.`));
     });
 }
 
