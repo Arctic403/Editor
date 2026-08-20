@@ -14,3 +14,12 @@ Patched GitHub integration to make repository synchronization explicit and relia
 - ZIP export now restores Base64-backed binary files to their original bytes.
 - Push checks require a selected branch and URL-encode repository file paths safely.
 - Added current GitHub REST API headers/version.
+
+
+## Safari v2 cache/IndexedDB patch
+- Renamed the application script to `app-safari-v2.js` and changed `index.html` to reference the new filename, forcing Safari to stop using a cached legacy `app.js`.
+- Added asset version query strings.
+- Added an application build marker in the console.
+- All remaining workspace IndexedDB operations now obtain a live database through `getDatabase()` instead of directly assuming the global `db` connection is ready.
+- Added Safari page-cache IndexedDB recovery via `pageshow`.
+- GitHub pulls validate/open IndexedDB before downloading files.
