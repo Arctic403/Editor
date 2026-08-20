@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <title>Local Workspace + GitHub Push</title>
     <link rel="stylesheet" href="style.css">
+
+    <!-- JSZip for ZIP extraction -->
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
 
@@ -30,7 +33,7 @@
 
 <div id="fileControls">
     <button id="newFileBtn">New File</button>
-    <input type="file" id="uploadInput">
+    <input type="file" id="uploadInput" multiple>
 </div>
 
 <ul id="fileList"></ul>
