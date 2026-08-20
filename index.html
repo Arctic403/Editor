@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Local Workspace + GitHub Push</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<h1>Local Workspace</h1>
+
+<div id="tokenBox">
+    <label>GitHub Token:</label>
+    <input type="password" id="tokenInput" placeholder="Paste PAT here">
+</div>
+
+<div id="repoBox">
+    <label>Repo (owner/repo):</label>
+    <input type="text" id="repoInput" placeholder="username/repo">
+</div>
+
+<div id="branchBox">
+    <label>Branch:</label>
+    <input type="text" id="branchInput" value="main">
+</div>
+
+<hr>
+
+<h2>Your Local Files</h2>
+
+<div id="fileControls">
+    <button id="newFileBtn">New File</button>
+    <input type="file" id="uploadInput">
+</div>
+
+<ul id="fileList"></ul>
+
+<hr>
+
+<h2>Editor</h2>
+<textarea id="editor"></textarea>
+
+<div id="editorControls">
+    <button id="saveLocalBtn">Save Locally</button>
+    <button id="pushGitHubBtn">Push to GitHub</button>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
