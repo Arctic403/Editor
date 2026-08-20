@@ -23,3 +23,11 @@ Patched GitHub integration to make repository synchronization explicit and relia
 - All remaining workspace IndexedDB operations now obtain a live database through `getDatabase()` instead of directly assuming the global `db` connection is ready.
 - Added Safari page-cache IndexedDB recovery via `pageshow`.
 - GitHub pulls validate/open IndexedDB before downloading files.
+
+
+## Safari IndexedDB version fix (v3)
+- Removed the hard-coded `indexedDB.open("LocalWorkspaceDB", 3)` call.
+- The app now opens the database at whatever version already exists in Safari.
+- If the `files` object store is missing, it upgrades from the database's actual current version.
+- This fixes Safari `VersionError: An attempt was made to open a database using a lower version than the existing version`.
+- JavaScript asset renamed to `app-safari-v3.js` to force a fresh Safari load.
