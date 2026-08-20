@@ -1,28 +1,21 @@
 // #region Global Constants & Variables
-// Universal Text File Identifier (Matches over 50+ common code/data extensions)
 const EXTENSION_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|html|htm|md|xml|cfg|ini|lua|py|cpp|c|h|hpp|cs|java|go|rs|php|rb|sh|bat|ps1|sql|yaml|yml|toml|env|gitignore|properties|log|swift|kt|kts|dart|r|m|mm|vue|svelte|astro|graphql|gql|prisma|diff|patch|dockerfile|makefile)$/i;
 
 let db;
 let lastSearchIndex = 0;
-let selectedFolderPath = ""; // Track currently targeted folder for imports/creation
-let secondaryPaneFileName = ""; // Active file in secondary split-pane
-let isDirty = false; // Tracks un-saved changes for dirty dot indicator
+let selectedFolderPath = ""; 
+let secondaryPaneFileName = ""; 
+let isDirty = false; 
 // #endregion
 
 // #region Helper Utilities
-// Safe Event Listener Binding (iOS Safari + Chrome Mobile Compatible)
 function bindClick(id, handler) {
     const element = document.getElementById(id);
     if (element) {
         element.addEventListener("click", handler);
-        element.addEventListener("touchend", function (e) {
-            e.preventDefault();
-            handler(e);
-        }, { passive: false });
     }
 }
 
-// Check if raw file data contains standard printable text
 function isTextContent(str) {
     if (!str) return true;
     let nonPrintable = 0;
@@ -35,7 +28,6 @@ function isTextContent(str) {
     return (nonPrintable / Math.min(str.length, 1000)) < 0.1;
 }
 
-// Decode Base64 Strings Back to Plain Text
 function decodeBase64Text(base64Str) {
     try {
         const cleanBase64 = base64Str.replace(/^data:application\/octet-stream;base64,/, "");
@@ -43,9 +35,7 @@ function decodeBase64Text(base64Str) {
         if (isTextContent(binaryString)) {
             return binaryString;
         }
-    } catch (e) {
-        // Return original if decoding fails
-    }
+    } catch (e) {}
     return base64Str;
 }
 
@@ -62,7 +52,6 @@ function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Tab View Navigation Manager
 function switchTab(viewName) {
     document.querySelectorAll('.page-view').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -74,7 +63,6 @@ function switchTab(viewName) {
     if (targetTab) targetTab.classList.add('active');
 }
 
-// Syntax Highlighting Engine (Simple Tokenizer Regex for HTML, CSS, JS, JSON)
 function applySyntaxHighlighting(code, filename) {
     if (!filename) return escapeHtml(code);
     const ext = filename.split('.').pop().toLowerCase();
@@ -100,7 +88,7 @@ function applySyntaxHighlighting(code, filename) {
         return escaped
             .replace(/(\/\*[\s\S]*?\*\/)/g, '<span style="color: #6a9955;">$1</span>')
             .replace(/([a-zA-Z\-]+)\s*:/g, '<span style="color: #9cdcfe;">$1</span>:')
-            .replace(/(#[a-fA-F0-9]{3,6}|\d+px|\d+rem|\d+em|\d+%)/g, '<span style="color: #b5cea8;">$1</span>');
+            .replace(/(#[a-fA-F0-9]{3,6}|\d+px|\d+rem|\d+%)/g, '<span style="color: #b5cea8;">$1</span>');
     }
 
     return escaped;
@@ -443,11 +431,20 @@ async function pushFileToGitHub(name, content, token, repo, branch) {
         }
     } catch (e) {}
 
-    const bytes = new TextEncoder().encode(content);
-    const base64Content = btoa(String.fromCharCode(...bytes));
+    // FileReader Base64 conversion prevents Stack Overflow call limits on large files
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const base64Content = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            const result = reader.result;
+            resolve(result.split(',')[1]);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
 
     const body = {
-        message: `Update ${name} via Mobile Editor`,
+        message: `Update ${name} via Mobile Workspace`,
         content: base64Content,
         branch: branch,
         ...(sha && { sha })
@@ -507,7 +504,7 @@ function renderCodeBlockNav(content) {
 function jumpToLine(lineNumber) {
     const editor = document.getElementById("editor");
     if (!editor) return;
-    const lineHeight = 20; // Matches editor CSS line-height
+    const lineHeight = 20;
     editor.scrollTop = (lineNumber - 1) * lineHeight;
     editor.focus();
 }
@@ -520,12 +517,10 @@ function bindUIEvents() {
     const lineNumbers = document.getElementById("lineNumbers");
     const searchInput = document.getElementById("searchInput");
 
-    // Tab Switchers
     bindClick("tabExplorer", () => switchTab('explorer'));
     bindClick("tabEditor", () => switchTab('editor'));
 
     if (editor) {
-        // Sync input changes across Line Numbers, Background Highlights, Block Nav & Auto-Save
         editor.addEventListener("input", function () {
             updateLineNumbers();
             updateHighlights();
@@ -534,7 +529,6 @@ function bindUIEvents() {
             autoSaveCurrentFile();
         });
 
-        // Code Editor Shortcuts: Support Tab indentation & Save hotkey
         editor.addEventListener("keydown", function (e) {
             if (e.key === "Tab") {
                 e.preventDefault();
@@ -555,7 +549,6 @@ function bindUIEvents() {
             }
         });
 
-        // Sync horizontal/vertical scrolling across all three layers
         editor.addEventListener("scroll", function () {
             if (lineNumbers) lineNumbers.scrollTop = editor.scrollTop;
             if (highlightLayer) {
@@ -565,7 +558,6 @@ function bindUIEvents() {
         });
     }
 
-    // Live update search highlights as you type in search field
     if (searchInput) {
         searchInput.addEventListener("input", updateHighlights);
     }
@@ -597,8 +589,41 @@ function bindUIEvents() {
     });
 
     bindClick("splitPaneBtn", toggleSplitPane);
+    bindClick("closeSplitBtn", toggleSplitPane);
 
-    // WORKING FIND & HIGHLIGHT FUNCTIONALITY
+    bindClick("jumpLineBtn", function () {
+        const lineStr = prompt("Enter line number:");
+        if (!lineStr) return;
+        const lineNum = parseInt(lineStr, 10);
+        if (!isNaN(lineNum) && lineNum > 0) {
+            jumpToLine(lineNum);
+        }
+    });
+
+    bindClick("exportWorkspaceBtn", async function () {
+        if (typeof JSZip === "undefined") return alert("JSZip library failed to load.");
+        if (!db) return;
+
+        const tx = db.transaction("files", "readonly");
+        const store = tx.objectStore("files");
+        const req = store.getAll();
+
+        req.onsuccess = async function () {
+            const files = req.result;
+            if (files.length === 0) return alert("No files to export.");
+
+            const zip = new JSZip();
+            files.forEach(file => zip.file(file.name, file.content));
+
+            const blob = await zip.generateAsync({ type: "blob" });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = `workspace_backup_${new Date().toISOString().slice(0, 10)}.zip`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        };
+    });
+
     bindClick("findNextBtn", function () {
         const searchVal = document.getElementById("searchInput").value;
         if (!searchVal) return alert("Enter text to find.");
@@ -611,19 +636,16 @@ function bindUIEvents() {
         let index = lowerText.indexOf(lowerSearch, lastSearchIndex);
 
         if (index === -1) {
-            index = lowerText.indexOf(lowerSearch, 0); // Loop back to start
+            index = lowerText.indexOf(lowerSearch, 0);
         }
 
         if (index !== -1) {
             editor.focus();
-            
-            // Set text range selection (Highlights text cursor position)
             editor.setSelectionRange(index, index + searchVal.length);
             lastSearchIndex = index + searchVal.length;
 
-            // Scroll editor view directly to match location
             const linesBefore = text.substring(0, index).split("\n").length;
-            const lineHeight = 20; // Approximate line height in px
+            const lineHeight = 20;
             editor.scrollTop = (linesBefore - 2) * lineHeight;
             
             updateHighlights();
@@ -633,7 +655,6 @@ function bindUIEvents() {
         }
     });
 
-    // REPLACE SINGLE
     bindClick("replaceBtn", function () {
         const searchVal = document.getElementById("searchInput").value;
         const replaceVal = document.getElementById("replaceInput").value;
@@ -656,7 +677,6 @@ function bindUIEvents() {
         }
     });
 
-    // REPLACE ALL
     bindClick("replaceAllBtn", function () {
         const searchVal = document.getElementById("searchInput").value;
         const replaceVal = document.getElementById("replaceInput").value;
@@ -789,33 +809,53 @@ function updateLineNumbers() {
 
 function updateHighlights() {
     const editor = document.getElementById("editor");
+    const highlightCode = document.getElementById("highlightCode");
     const highlightLayer = document.getElementById("highlightLayer");
     const searchInput = document.getElementById("searchInput");
     const searchBar = document.getElementById("searchReplaceBar");
 
-    if (!editor || !highlightLayer) return;
+    if (!editor) return;
 
     let text = editor.value;
     const filename = editor.dataset.filename || "";
     
-    // Trailing newline check so editor cursor vertical align matches exact height
     if (text.endsWith("\n")) {
         text += " ";
     }
 
     const searchVal = searchInput ? searchInput.value : "";
-    
-    // Process base text through syntax high-lighter
+    const isSearchActive = searchVal && searchBar && !searchBar.classList.contains("hidden");
+
+    if (highlightCode) {
+        const ext = filename.split('.').pop().toLowerCase();
+        const langMap = { js: 'javascript', ts: 'typescript', py: 'python', md: 'markdown', html: 'markup', css: 'css', json: 'json' };
+        const lang = langMap[ext] || 'plaintext';
+
+        if (window.Prism && Prism.languages[lang]) {
+            let highlighted = Prism.highlight(text, Prism.languages[lang], lang);
+            if (isSearchActive) {
+                const escapedSearch = escapeHtml(searchVal);
+                const regex = new RegExp(`(${escapeRegExp(escapedSearch)})`, "gi");
+                highlighted = highlighted.replace(regex, `<mark class="search-highlight">$1</mark>`);
+            }
+            highlightCode.innerHTML = highlighted;
+            return;
+        }
+    }
+
     let renderedText = applySyntaxHighlighting(text, filename);
 
-    // Inject search result highlighting if search bar active
-    if (searchVal && searchBar && !searchBar.classList.contains("hidden")) {
+    if (isSearchActive) {
         const escapedSearch = escapeHtml(searchVal);
         const regex = new RegExp(`(${escapeRegExp(escapedSearch)})`, "gi");
         renderedText = renderedText.replace(regex, `<mark class="search-highlight">$1</mark>`);
     }
 
-    highlightLayer.innerHTML = renderedText;
+    if (highlightCode) {
+        highlightCode.innerHTML = renderedText;
+    } else if (highlightLayer) {
+        highlightLayer.innerHTML = renderedText;
+    }
 }
 
 function updateBreadcrumbs(filePath) {
@@ -898,9 +938,12 @@ function openSecondaryPaneFile(name) {
             rawContent = decodeBase64Text(rawContent);
         }
 
-        view.textContent = rawContent;
+        view.value = rawContent;
         secondaryPaneFileName = name;
         if (title) title.textContent = name;
+        
+        const secCode = document.getElementById("secondaryHighlightCode");
+        if (secCode) secCode.textContent = rawContent;
     };
 }
 // #endregion
@@ -1202,7 +1245,6 @@ function openFile(name) {
         updateBreadcrumbs(name);
         updateDirtyIndicator(false);
 
-        // Automatically switch to editor view when opening a file
         switchTab('editor');
     };
 }
