@@ -18,7 +18,7 @@ request.onsuccess = function (event) {
 };
 
 // ---------------------------
-// LocalStorage Persistence
+// LocalStorage Settings
 // ---------------------------
 function restoreSettings() {
     document.getElementById("tokenInput").value = localStorage.getItem("gh_token") || "";
@@ -31,7 +31,7 @@ document.getElementById("repoInput").addEventListener("input", e => localStorage
 document.getElementById("branchInput").addEventListener("input", e => localStorage.setItem("gh_branch", e.target.value.trim()));
 
 // ---------------------------
-// Load Files
+// File Tree Manager Logic
 // ---------------------------
 function loadFiles() {
     const tx = db.transaction("files", "readonly");
@@ -39,28 +39,93 @@ function loadFiles() {
     const req = store.getAll();
 
     req.onsuccess = function () {
-        const list = document.getElementById("fileList");
-        list.innerHTML = "";
-
-        req.result.forEach(file => {
-            const li = document.createElement("li");
-            li.innerHTML = `
-                <span>${file.name}</span>
-                <div>
-                    <button onclick="openFile('${file.name}')">Open</button>
-                    <button onclick="deleteFile('${file.name}')">Delete</button>
-                </div>
-            `;
-            list.appendChild(li);
-        });
+        const files = req.result;
+        document.getElementById("itemCount").textContent = `${files.length} items`;
+        
+        const treeRoot = buildFileTreeStructure(files);
+        const container = document.getElementById("fileTree");
+        container.innerHTML = "";
+        renderTree(treeRoot, container);
     };
 }
 
+function buildFileTreeStructure(files) {
+    const root = {};
+
+    files.forEach(file => {
+        const parts = file.name.split('/');
+        let current = root;
+
+        parts.forEach((part, index) => {
+            if (index === parts.length - 1) {
+                current[part] = { _isFile: true, fullPath: file.name };
+            } else {
+                if (!current[part]) {
+                    current[part] = { _isFile: false, _children: {} };
+                }
+                current = current[part]._children;
+            }
+        });
+    });
+
+    return root;
+}
+
+function renderTree(node, container) {
+    for (const key in node) {
+        const item = node[key];
+        const treeNode = document.createElement("div");
+        treeNode.className = "tree-node";
+
+        if (item._isFile) {
+            const ext = key.split('.').pop().toLowerCase();
+            let icon = "📄";
+            if (["html", "htm"].includes(ext)) icon = "🌐";
+            else if (["css"].includes(ext)) icon = "🎨";
+            else if (["js", "json"].includes(ext)) icon = "⚡";
+
+            treeNode.innerHTML = `
+                <div class="tree-row" onclick="openFile('${item.fullPath}')">
+                    <span class="tree-label">${icon} ${key}</span>
+                    <span class="delete-icon" onclick="event.stopPropagation(); deleteFile('${item.fullPath}')">✕</span>
+                </div>
+            `;
+        } else {
+            const childrenContainer = document.createElement("div");
+            childrenContainer.className = "tree-children";
+            childrenContainer.style.display = "none";
+
+            treeNode.innerHTML = `
+                <div class="tree-row" onclick="toggleFolder(this)">
+                    <span class="tree-label">📁 <strong>${key}</strong></span>
+                </div>
+            `;
+            
+            renderTree(item._children, childrenContainer);
+            treeNode.appendChild(childrenContainer);
+        }
+
+        container.appendChild(treeNode);
+    }
+}
+
+function toggleFolder(rowElement) {
+    const children = rowElement.nextElementSibling;
+    if (children) {
+        const isHidden = children.style.display === "none";
+        children.style.display = isHidden ? "block" : "none";
+        const folderIcon = rowElement.querySelector(".tree-label");
+        if (folderIcon) {
+            folderIcon.innerHTML = folderIcon.innerHTML.replace(isHidden ? "📁" : "📂", isHidden ? "📂" : "📁");
+        }
+    }
+}
+
 // ---------------------------
-// Create New File
+// File Operations
 // ---------------------------
 document.getElementById("newFileBtn").onclick = function () {
-    const name = prompt("File name (e.g., index.html or src/main.js):");
+    const name = prompt("Enter file path (e.g., src/index.js):");
     if (!name) return;
 
     const tx = db.transaction("files", "readwrite");
@@ -73,23 +138,19 @@ document.getElementById("newFileBtn").onclick = function () {
     };
 };
 
-// ---------------------------
-// Upload File or ZIP (iOS Safe)
-// ---------------------------
 document.getElementById("uploadInput").onchange = async function (event) {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
     for (const file of files) {
         if (file.name.toLowerCase().endsWith(".zip")) {
-            await unpackZipIOS(file);
+            await unpackZip(file);
         } else {
             await importRegularFile(file);
         }
     }
 
     loadFiles();
-    // Reset file input for repeated uploads
     event.target.value = "";
 };
 
@@ -107,9 +168,6 @@ async function importRegularFile(file) {
     });
 }
 
-// ---------------------------
-// iOS Safari Compatible ZIP Handler
-// ---------------------------
 function readFileAsArrayBuffer(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -119,16 +177,14 @@ function readFileAsArrayBuffer(file) {
     });
 }
 
-async function unpackZipIOS(zipFile) {
+async function unpackZip(zipFile) {
     try {
         if (typeof JSZip === "undefined") {
-            throw new Error("JSZip script failed to load. Check your internet connection.");
+            throw new Error("JSZip library not loaded.");
         }
 
-        // iOS Safari workaround: Use FileReader explicitly
         const buffer = await readFileAsArrayBuffer(zipFile);
         const zip = await JSZip.loadAsync(buffer);
-
         const extractedFiles = [];
 
         for (const path in zip.files) {
@@ -145,17 +201,11 @@ async function unpackZipIOS(zipFile) {
                 content = "data:application/octet-stream;base64," + base64;
             }
 
-            extractedFiles.push({ name: entry.name, content: content });
-        }
-
-        if (extractedFiles.length === 0) {
-            alert("ZIP file appears to be empty.");
-            return;
+            extractedFiles.push({ name: entry.name, content });
         }
 
         const tx = db.transaction("files", "readwrite");
         const store = tx.objectStore("files");
-
         for (const item of extractedFiles) {
             store.put(item);
         }
@@ -166,14 +216,10 @@ async function unpackZipIOS(zipFile) {
         });
 
     } catch (err) {
-        console.error("iOS ZIP error:", err);
-        alert("Failed to unpack ZIP on iOS: " + err.message);
+        alert("ZIP unpack error: " + err.message);
     }
 }
 
-// ---------------------------
-// Open & Delete File
-// ---------------------------
 function openFile(name) {
     const tx = db.transaction("files", "readonly");
     const store = tx.objectStore("files");
@@ -201,23 +247,20 @@ function deleteFile(name) {
     };
 }
 
-// ---------------------------
-// Save Locally
-// ---------------------------
 document.getElementById("saveLocalBtn").onclick = function () {
     const name = document.getElementById("editor").dataset.filename;
-    if (!name) return alert("No file selected.");
+    if (!name) return alert("Select a file first.");
 
     const content = document.getElementById("editor").value;
     const tx = db.transaction("files", "readwrite");
     const store = tx.objectStore("files");
     store.put({ name, content });
 
-    tx.oncomplete = () => alert("Saved locally!");
+    tx.oncomplete = () => alert("Saved!");
 };
 
 // ---------------------------
-// GitHub Integration (Single & Batch)
+// GitHub Push Operations
 // ---------------------------
 async function pushFileToGitHub(name, content, token, repo, branch) {
     const url = `https://api.github.com/repos/${repo}/contents/${name}`;
@@ -234,26 +277,19 @@ async function pushFileToGitHub(name, content, token, repo, branch) {
             const fileData = await getRes.json();
             sha = fileData.sha;
         }
-    } catch (err) {
-        console.warn("New file commit detected.");
-    }
+    } catch (e) {}
 
     const bytes = new TextEncoder().encode(content);
     const base64Content = btoa(String.fromCharCode(...bytes));
 
     const body = {
-        message: `Update ${name} via Web Editor`,
+        message: `Update ${name} via Mobile Editor`,
         content: base64Content,
         branch: branch,
         ...(sha && { sha })
     };
 
-    const res = await fetch(url, {
-        method: "PUT",
-        headers,
-        body: JSON.stringify(body)
-    });
-
+    const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
     if (!res.ok) {
         const errData = await res.json();
         throw new Error(errData.message || res.status);
@@ -267,15 +303,13 @@ document.getElementById("pushGitHubBtn").onclick = async function () {
     const name = document.getElementById("editor").dataset.filename;
     const content = document.getElementById("editor").value;
 
-    if (!token || !repo || !name) {
-        return alert("Please select a file and ensure Token & Repo fields are filled out.");
-    }
+    if (!token || !repo || !name) return alert("Select a file & fill GitHub credentials.");
 
     try {
         await pushFileToGitHub(name, content, token, repo, branch);
-        alert(`Pushed ${name} successfully!`);
+        alert(`Pushed ${name}!`);
     } catch (err) {
-        alert("GitHub Push Error: " + err.message);
+        alert("Push failed: " + err.message);
     }
 };
 
@@ -284,9 +318,7 @@ document.getElementById("pushAllGitHubBtn").onclick = async function () {
     const repo = document.getElementById("repoInput").value.trim();
     const branch = document.getElementById("branchInput").value.trim();
 
-    if (!token || !repo) {
-        return alert("Please ensure Token & Repo fields are filled out.");
-    }
+    if (!token || !repo) return alert("Fill GitHub credentials.");
 
     const tx = db.transaction("files", "readonly");
     const store = tx.objectStore("files");
@@ -294,17 +326,17 @@ document.getElementById("pushAllGitHubBtn").onclick = async function () {
 
     req.onsuccess = async function () {
         const files = req.result;
-        if (files.length === 0) return alert("No local files to push.");
+        if (files.length === 0) return alert("No files to push.");
 
-        let successCount = 0;
+        let success = 0;
         for (const file of files) {
             try {
                 await pushFileToGitHub(file.name, file.content, token, repo, branch);
-                successCount++;
+                success++;
             } catch (err) {
-                console.error(`Failed to push ${file.name}:`, err);
+                console.error(err);
             }
         }
-        alert(`Pushed ${successCount} of ${files.length} files to GitHub!`);
+        alert(`Pushed ${success} of ${files.length} files!`);
     };
 };
