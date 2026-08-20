@@ -5,6 +5,8 @@ const EXTENSION_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|ht
 let db;
 let lastSearchIndex = 0;
 let selectedFolderPath = ""; // Track currently targeted folder for imports/creation
+let secondaryPaneFileName = ""; // Active file in secondary split-pane
+let isDirty = false; // Tracks un-saved changes for dirty dot indicator
 // #endregion
 
 // #region Helper Utilities
@@ -71,6 +73,47 @@ function switchTab(viewName) {
     if (targetView) targetView.classList.add('active');
     if (targetTab) targetTab.classList.add('active');
 }
+
+// Syntax Highlighting Engine (Simple Tokenizer Regex for HTML, CSS, JS, JSON)
+function applySyntaxHighlighting(code, filename) {
+    if (!filename) return escapeHtml(code);
+    const ext = filename.split('.').pop().toLowerCase();
+    let escaped = escapeHtml(code);
+
+    if (["js", "ts", "jsx", "tsx", "json", "mjs", "cjs"].includes(ext)) {
+        return escaped
+            .replace(/(&quot;[\s\S]*?&quot;|&#039;[\s\S]*?&#039;|`[\s\S]*?`)/g, '<span style="color: #ce9178;">$1</span>')
+            .replace(/(\/\/.x*?|\/\*[\s\S]*?\*\/)/g, '<span style="color: #6a9955;">$1</span>')
+            .replace(/\b(const|let|var|function|return|if|else|for|while|import|export|from|async|await|class|try|catch|new|this)\b/g, '<span style="color: #569cd6;">$1</span>')
+            .replace(/\b(true|false|null|undefined|NaN)\b/g, '<span style="color: #569cd6;">$1</span>')
+            .replace(/\b(\d+)\b/g, '<span style="color: #b5cea8;">$1</span>');
+    }
+
+    if (["html", "xml", "svg"].includes(ext)) {
+        return escaped
+            .replace(/(&lt;\/?[a-zA-Z0-9\-]+)/g, '<span style="color: #569cd6;">$1</span>')
+            .replace(/([a-zA-Z\-]+)=(&quot;.*?&quot;|&#039;.*?&#039;)/g, '<span style="color: #9cdcfe;">$1</span>=<span style="color: #ce9178;">$2</span>')
+            .replace(/(&lt;!--[\s\S]*?--&gt;)/g, '<span style="color: #6a9955;">$1</span>');
+    }
+
+    if (["css", "scss", "sass", "less"].includes(ext)) {
+        return escaped
+            .replace(/(\/\*[\s\S]*?\*\/)/g, '<span style="color: #6a9955;">$1</span>')
+            .replace(/([a-zA-Z\-]+)\s*:/g, '<span style="color: #9cdcfe;">$1</span>:')
+            .replace(/(#[a-fA-F0-9]{3,6}|\d+px|\d+rem|\d+em|\d+%)/g, '<span style="color: #b5cea8;">$1</span>');
+    }
+
+    return escaped;
+}
+
+function updateDirtyIndicator(dirty) {
+    isDirty = dirty;
+    const dot = document.getElementById("saveIndicator");
+    if (dot) {
+        dot.className = "save-indicator " + (dirty ? "dirty" : "clean");
+        dot.textContent = dirty ? "●" : "○";
+    }
+}
 // #endregion
 
 // #region Application Initialization
@@ -78,6 +121,9 @@ document.addEventListener("DOMContentLoaded", function () {
     initDatabase();
     bindUIEvents();
     bindGitHubEvents();
+    initSymbolBar();
+    initQuickOpen();
+    initThemeSelector();
 });
 
 function initDatabase() {
@@ -106,11 +152,138 @@ function restoreSettings() {
             fetchGitHubRepos(token);
         }
     }
+    const savedTheme = localStorage.getItem("editor_theme") || "dark";
+    const themeSelect = document.getElementById("themeSelect");
+    if (themeSelect) {
+        themeSelect.value = savedTheme;
+        applyTheme(savedTheme);
+    }
 }
 
 const tokenInputEl = document.getElementById("tokenInput");
 if (tokenInputEl) {
     tokenInputEl.addEventListener("input", e => localStorage.setItem("gh_token", e.target.value.trim()));
+}
+// #endregion
+
+// #region Theme Switching Logic
+function initThemeSelector() {
+    const themeSelect = document.getElementById("themeSelect");
+    if (themeSelect) {
+        themeSelect.addEventListener("change", function () {
+            applyTheme(this.value);
+            localStorage.setItem("editor_theme", this.value);
+        });
+    }
+}
+
+function applyTheme(theme) {
+    document.body.classList.remove("theme-light", "theme-monokai");
+    if (theme === "light") document.body.classList.add("theme-light");
+    if (theme === "monokai") document.body.classList.add("theme-monokai");
+}
+// #endregion
+
+// #region Accessory Keyboard & Quick Open Features
+function initSymbolBar() {
+    const symbols = ["{", "}", "(", ")", "[", "]", ";", "=", ":", "\"", "'", "<", ">", "/", "\\", "`", "$", "#", "|", "&"];
+    const container = document.getElementById("symbolBar");
+    if (!container) return;
+
+    container.innerHTML = "";
+    symbols.forEach(sym => {
+        const btn = document.createElement("button");
+        btn.className = "symbol-btn";
+        btn.textContent = sym;
+        btn.onclick = (e) => {
+            e.preventDefault();
+            insertSymbolAtCursor(sym);
+        };
+        container.appendChild(btn);
+    });
+}
+
+function insertSymbolAtCursor(symbol) {
+    const editor = document.getElementById("editor");
+    if (!editor) return;
+
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const text = editor.value;
+
+    editor.value = text.substring(0, start) + symbol + text.substring(end);
+    editor.selectionStart = editor.selectionEnd = start + symbol.length;
+
+    updateLineNumbers();
+    updateHighlights();
+    renderCodeBlockNav(editor.value);
+    updateDirtyIndicator(true);
+    autoSaveCurrentFile();
+    editor.focus();
+}
+
+function initQuickOpen() {
+    bindClick("quickOpenBtn", toggleQuickOpenModal);
+    bindClick("closeQuickOpenModal", toggleQuickOpenModal);
+
+    const input = document.getElementById("quickOpenInput");
+    if (input) {
+        input.addEventListener("input", function () {
+            filterQuickOpenFiles(this.value.trim().toLowerCase());
+        });
+    }
+
+    document.addEventListener("keydown", function (e) {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+            e.preventDefault();
+            toggleQuickOpenModal();
+        }
+    });
+}
+
+function toggleQuickOpenModal() {
+    const modal = document.getElementById("quickOpenModal");
+    if (!modal) return;
+    const isHidden = modal.classList.toggle("hidden");
+    if (!isHidden) {
+        const input = document.getElementById("quickOpenInput");
+        if (input) {
+            input.value = "";
+            input.focus();
+        }
+        filterQuickOpenFiles("");
+    }
+}
+
+function filterQuickOpenFiles(query) {
+    if (!db) return;
+    const container = document.getElementById("quickOpenResults");
+    if (!container) return;
+
+    const tx = db.transaction("files", "readonly");
+    const store = tx.objectStore("files");
+    const req = store.getAllKeys();
+
+    req.onsuccess = function () {
+        const keys = req.result;
+        container.innerHTML = "";
+
+        const filtered = keys.filter(k => k.toLowerCase().includes(query));
+        filtered.forEach(key => {
+            const item = document.createElement("div");
+            item.className = "quick-item";
+            item.textContent = key;
+            item.onclick = () => {
+                openFile(key);
+                toggleQuickOpenModal();
+            };
+            container.appendChild(item);
+        });
+
+        if (filtered.length === 0) {
+            container.innerHTML = `<div style="padding:8px; font-size:0.8rem; color:#888;">No matching files</div>`;
+        }
+    };
 }
 // #endregion
 
@@ -357,6 +530,7 @@ function bindUIEvents() {
             updateLineNumbers();
             updateHighlights();
             renderCodeBlockNav(this.value);
+            updateDirtyIndicator(true);
             autoSaveCurrentFile();
         });
 
@@ -372,6 +546,7 @@ function bindUIEvents() {
                 updateLineNumbers();
                 updateHighlights();
                 renderCodeBlockNav(this.value);
+                updateDirtyIndicator(true);
             }
 
             if ((e.ctrlKey || e.metaKey) && e.key === "s") {
@@ -404,6 +579,8 @@ function bindUIEvents() {
         updateLineNumbers();
         updateHighlights();
         renderCodeBlockNav("");
+        updateBreadcrumbs("");
+        updateDirtyIndicator(false);
     });
 
     bindClick("searchToggleBtn", function () {
@@ -418,6 +595,8 @@ function bindUIEvents() {
         const btn = document.getElementById("fullscreenBtn");
         if (btn) btn.textContent = isFullscreen ? "⛶ Exit" : "⛶ Fullscreen";
     });
+
+    bindClick("splitPaneBtn", toggleSplitPane);
 
     // WORKING FIND & HIGHLIGHT FUNCTIONALITY
     bindClick("findNextBtn", function () {
@@ -472,6 +651,7 @@ function bindUIEvents() {
             updateLineNumbers();
             updateHighlights();
             renderCodeBlockNav(editor.value);
+            updateDirtyIndicator(true);
             autoSaveCurrentFile();
         }
     });
@@ -496,6 +676,7 @@ function bindUIEvents() {
             updateLineNumbers();
             updateHighlights();
             renderCodeBlockNav(editor.value);
+            updateDirtyIndicator(true);
             autoSaveCurrentFile();
             alert(`Replaced ${matches} instance(s).`);
         }
@@ -580,6 +761,7 @@ function saveCurrentFile(showAlert = false) {
     }
 
     saveFileToDb(name, editor.value).then(() => {
+        updateDirtyIndicator(false);
         if (showAlert) alert("Saved locally!");
     });
 }
@@ -614,6 +796,7 @@ function updateHighlights() {
     if (!editor || !highlightLayer) return;
 
     let text = editor.value;
+    const filename = editor.dataset.filename || "";
     
     // Trailing newline check so editor cursor vertical align matches exact height
     if (text.endsWith("\n")) {
@@ -622,17 +805,103 @@ function updateHighlights() {
 
     const searchVal = searchInput ? searchInput.value : "";
     
-    // Hide highlights if search bar is hidden or query empty
-    if (!searchVal || (searchBar && searchBar.classList.contains("hidden"))) {
-        highlightLayer.innerHTML = escapeHtml(text);
+    // Process base text through syntax high-lighter
+    let renderedText = applySyntaxHighlighting(text, filename);
+
+    // Inject search result highlighting if search bar active
+    if (searchVal && searchBar && !searchBar.classList.contains("hidden")) {
+        const escapedSearch = escapeHtml(searchVal);
+        const regex = new RegExp(`(${escapeRegExp(escapedSearch)})`, "gi");
+        renderedText = renderedText.replace(regex, `<mark class="search-highlight">$1</mark>`);
+    }
+
+    highlightLayer.innerHTML = renderedText;
+}
+
+function updateBreadcrumbs(filePath) {
+    const container = document.getElementById("breadcrumbBar");
+    if (!container) return;
+    container.innerHTML = "";
+
+    if (!filePath) {
+        container.innerHTML = `<span class="breadcrumb-item">Workspace</span>`;
         return;
     }
 
-    const escapedText = escapeHtml(text);
-    const escapedSearch = escapeHtml(searchVal);
-    const regex = new RegExp(`(${escapeRegExp(escapedSearch)})`, "gi");
+    const parts = filePath.split('/');
+    let cumulative = "";
 
-    highlightLayer.innerHTML = escapedText.replace(regex, `<mark class="search-highlight">$1</mark>`);
+    const rootItem = document.createElement("span");
+    rootItem.className = "breadcrumb-item";
+    rootItem.textContent = "Workspace";
+    rootItem.onclick = () => loadFiles();
+    container.appendChild(rootItem);
+
+    parts.forEach((part, index) => {
+        const sep = document.createElement("span");
+        sep.className = "breadcrumb-separator";
+        sep.textContent = " / ";
+        container.appendChild(sep);
+
+        cumulative += (index === 0 ? "" : "/") + part;
+        const item = document.createElement("span");
+        item.className = "breadcrumb-item";
+        item.textContent = part;
+
+        if (index === parts.length - 1) {
+            item.style.color = "#d4d4d4";
+        } else {
+            const pathCopy = cumulative;
+            item.onclick = () => selectFolderByPath(pathCopy);
+        }
+        container.appendChild(item);
+    });
+}
+
+function selectFolderByPath(path) {
+    selectedFolderPath = path;
+    switchTab('explorer');
+    loadFiles();
+}
+// #endregion
+
+// #region Dual Split Panes
+function toggleSplitPane() {
+    const pane = document.getElementById("secondaryPane");
+    if (!pane) return;
+
+    const isHidden = pane.classList.toggle("hidden");
+    const btn = document.getElementById("splitPaneBtn");
+    if (btn) btn.textContent = isHidden ? "▥ Split" : "✕ Single";
+
+    if (!isHidden && !secondaryPaneFileName) {
+        const mainEditor = document.getElementById("editor");
+        if (mainEditor && mainEditor.dataset.filename) {
+            openSecondaryPaneFile(mainEditor.dataset.filename);
+        }
+    }
+}
+
+function openSecondaryPaneFile(name) {
+    if (!db) return;
+    const tx = db.transaction("files", "readonly");
+    const store = tx.objectStore("files");
+    const req = store.get(name);
+
+    req.onsuccess = function () {
+        const view = document.getElementById("secondaryEditorView");
+        const title = document.getElementById("secondaryPaneTitle");
+        if (!view) return;
+
+        let rawContent = req.result ? req.result.content : "";
+        if (typeof rawContent === "string" && rawContent.startsWith("data:application/octet-stream;base64,")) {
+            rawContent = decodeBase64Text(rawContent);
+        }
+
+        view.textContent = rawContent;
+        secondaryPaneFileName = name;
+        if (title) title.textContent = name;
+    };
 }
 // #endregion
 
@@ -694,7 +963,10 @@ function renderTree(node, container, currentFolderPath) {
             treeNode.innerHTML = `
                 <div class="tree-row" draggable="true" data-path="${item.fullPath}">
                     <span class="tree-label" onclick="openFile('${item.fullPath}')">${icon} ${key}</span>
-                    <span class="delete-icon" onclick="deleteFile('${item.fullPath}')">✕</span>
+                    <span style="display:flex; gap:4px; align-items:center;">
+                        <span class="delete-icon" title="View in Split Side Pane" onclick="openSecondaryPaneFile('${item.fullPath}')">▥</span>
+                        <span class="delete-icon" onclick="deleteFile('${item.fullPath}')">✕</span>
+                    </span>
                 </div>
             `;
 
@@ -787,6 +1059,7 @@ async function moveFileToFolder(filePath, targetFolderPath) {
             editor.dataset.filename = newPath;
             const label = document.getElementById("activeFileLabel");
             if (label) label.textContent = "Editing: " + newPath;
+            updateBreadcrumbs(newPath);
         }
         loadFiles();
     };
@@ -926,6 +1199,8 @@ function openFile(name) {
         updateLineNumbers();
         updateHighlights();
         renderCodeBlockNav(rawContent);
+        updateBreadcrumbs(name);
+        updateDirtyIndicator(false);
 
         // Automatically switch to editor view when opening a file
         switchTab('editor');
@@ -947,6 +1222,8 @@ function deleteFile(name) {
             updateLineNumbers();
             updateHighlights();
             renderCodeBlockNav("");
+            updateBreadcrumbs("");
+            updateDirtyIndicator(false);
         }
         loadFiles();
     };
@@ -981,6 +1258,8 @@ function deleteFolder(folderPath) {
             updateLineNumbers();
             updateHighlights();
             renderCodeBlockNav("");
+            updateBreadcrumbs("");
+            updateDirtyIndicator(false);
             loadFiles();
         };
     };
