@@ -103,13 +103,19 @@ async function importRegularFile(file) {
     });
 }
 
+// ---------------------------
+// Handle ZIP file (FIXED)
+// ---------------------------
 async function unpackZip(zipFile) {
     try {
+        if (typeof JSZip === "undefined") {
+            throw new Error("JSZip library failed to load. Check your CDN script tag in index.html.");
+        }
+
         const arrayBuffer = await zipFile.arrayBuffer();
         const zip = await JSZip.loadAsync(arrayBuffer);
 
-        const tx = db.transaction("files", "readwrite");
-        const store = tx.objectStore("files");
+        const extractedFiles = [];
 
         for (const path in zip.files) {
             const entry = zip.files[path];
@@ -125,13 +131,31 @@ async function unpackZip(zipFile) {
                 content = "data:application/octet-stream;base64," + base64;
             }
 
-            store.put({ name: entry.name, content });
+            extractedFiles.push({ name: entry.name, content: content });
         }
 
-        return new Promise(resolve => tx.oncomplete = resolve);
+        if (extractedFiles.length === 0) {
+            alert("ZIP file appears to be empty.");
+            return;
+        }
+
+        const tx = db.transaction("files", "readwrite");
+        const store = tx.objectStore("files");
+
+        for (const fileItem of extractedFiles) {
+            store.put(fileItem);
+        }
+
+        return new Promise((resolve, reject) => {
+            tx.oncomplete = () => {
+                resolve();
+            };
+            tx.onerror = (err) => reject(err);
+        });
+
     } catch (err) {
-        console.error("ZIP unpack error:", err);
-        alert("Failed to unpack ZIP.");
+        console.error("ZIP unpack error details:", err);
+        alert("Failed to unpack ZIP: " + err.message);
     }
 }
 
