@@ -12,9 +12,14 @@
 <div class="app-container" id="appContainer">
     <header class="app-header" id="appHeader">
         <h1>Workspace Explorer</h1>
+        <!-- View Navigation Tabs -->
+        <nav class="view-tabs">
+            <button id="tabExplorer" class="tab-btn active" type="button">📁 Explorer</button>
+            <button id="tabEditor" class="tab-btn" type="button">📝 Editor</button>
+        </nav>
     </header>
 
-    <!-- Configuration Bar -->
+    <!-- Configuration Panel -->
     <details class="config-panel" id="configPanel">
         <summary>⚙️ App Settings</summary>
         <div class="config-grid">
@@ -38,59 +43,63 @@
         </div>
     </details>
 
-    <!-- Action Toolbar -->
-    <div class="toolbar" id="appToolbar">
-        <button id="newFileBtn" class="btn" type="button">📄 New File</button>
-        <label for="uploadInput" class="btn btn-secondary">📦 Import / ZIP</label>
-        <input type="file" id="uploadInput" multiple accept="*/*" style="display: none;">
-        <button id="pushAllGitHubBtn" class="btn btn-warning" type="button">🚀 Push All</button>
-    </div>
-
-    <!-- Windows File Manager Section -->
-    <section class="file-manager-section" id="explorerSection">
-        <div class="fm-header">
-            <span>📁 Explorer</span>
-            <span id="itemCount">0 items</span>
+    <!-- PAGE 1: FILE MANAGER VIEW -->
+    <main id="explorerView" class="page-view active">
+        <div class="toolbar" id="appToolbar">
+            <button id="newFileBtn" class="btn" type="button">📄 New File</button>
+            <button id="newFolderBtn" class="btn btn-secondary" type="button">📁 New Folder</button>
+            <label for="uploadInput" class="btn btn-secondary">📦 Import / ZIP</label>
+            <input type="file" id="uploadInput" multiple accept="*/*" style="display: none;">
+            <button id="pushAllGitHubBtn" class="btn btn-warning" type="button">🚀 Push All</button>
         </div>
-        <div id="fileTree" class="file-tree"></div>
-    </section>
 
-    <!-- Code Editor Section -->
-    <section class="editor-section" id="editorSection">
-        <div class="editor-header">
-            <span id="activeFileLabel">No file selected</span>
-            <div class="editor-actions">
-                <button id="searchToggleBtn" class="btn btn-sm btn-secondary" type="button">🔍 Find</button>
-                <button id="fullscreenBtn" class="btn btn-sm btn-secondary" type="button">⛶ Fullscreen</button>
-                <button id="saveLocalBtn" class="btn btn-sm" type="button">💾 Save</button>
-                <button id="pushGitHubBtn" class="btn btn-sm btn-success" type="button">☁️ Push</button>
-                <button id="closeFileBtn" class="btn btn-sm btn-danger" type="button">✕ Close</button>
+        <section class="file-manager-section" id="explorerSection">
+            <div class="fm-header">
+                <span id="activeFolderPath">📁 Explorer (Root)</span>
+                <span id="itemCount">0 items</span>
             </div>
-        </div>
+            <div id="fileTree" class="file-tree"></div>
+        </section>
+    </main>
 
-        <!-- Code Region / Block Navigation Bar -->
-        <div id="blockNav" class="block-navigation-bar">
-            <span class="no-blocks">No defined #region blocks</span>
-        </div>
-
-        <!-- Search & Replace Bar -->
-        <div id="searchReplaceBar" class="search-bar hidden">
-            <input type="text" id="searchInput" placeholder="Find text...">
-            <input type="text" id="replaceInput" placeholder="Replace with...">
-            <button id="findNextBtn" class="btn btn-sm btn-secondary" type="button">Find Next</button>
-            <button id="replaceBtn" class="btn btn-sm" type="button">Replace</button>
-            <button id="replaceAllBtn" class="btn btn-sm btn-secondary" type="button">Replace All</button>
-        </div>
-
-        <!-- Line Numbers + Dual-Layer Editor Workspace -->
-        <div class="editor-workspace editor-container">
-            <div id="lineNumbers" class="line-numbers">1</div>
-            <div class="editor-wrapper">
-                <div id="highlightLayer" class="highlight-layer"></div>
-                <textarea id="editor" class="editor-textarea" placeholder="Select a file from the explorer to edit..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+    <!-- PAGE 2: CODE EDITOR VIEW -->
+    <main id="editorView" class="page-view">
+        <section class="editor-section" id="editorSection">
+            <div class="editor-header">
+                <span id="activeFileLabel">No file selected</span>
+                <div class="editor-actions">
+                    <button id="searchToggleBtn" class="btn btn-sm btn-secondary" type="button">🔍 Find</button>
+                    <button id="fullscreenBtn" class="btn btn-sm btn-secondary" type="button">⛶ Fullscreen</button>
+                    <button id="saveLocalBtn" class="btn btn-sm" type="button">💾 Save</button>
+                    <button id="pushGitHubBtn" class="btn btn-sm btn-success" type="button">☁️ Push</button>
+                    <button id="closeFileBtn" class="btn btn-sm btn-danger" type="button">✕ Close</button>
+                </div>
             </div>
-        </div>
-    </section>
+
+            <!-- Block Navigation Bar -->
+            <div id="blockNav" class="block-navigation-bar">
+                <span class="no-blocks">No defined #region blocks</span>
+            </div>
+
+            <!-- Search & Replace Bar -->
+            <div id="searchReplaceBar" class="search-bar hidden">
+                <input type="text" id="searchInput" placeholder="Find text...">
+                <input type="text" id="replaceInput" placeholder="Replace with...">
+                <button id="findNextBtn" class="btn btn-sm btn-secondary" type="button">Find Next</button>
+                <button id="replaceBtn" class="btn btn-sm" type="button">Replace</button>
+                <button id="replaceAllBtn" class="btn btn-sm btn-secondary" type="button">Replace All</button>
+            </div>
+
+            <!-- Line Numbers + Dual-Layer Editor Workspace -->
+            <div class="editor-workspace editor-container">
+                <div id="lineNumbers" class="line-numbers">1</div>
+                <div class="editor-wrapper">
+                    <div id="highlightLayer" class="highlight-layer"></div>
+                    <textarea id="editor" class="editor-textarea" placeholder="Select a file from the explorer to edit..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+                </div>
+            </div>
+        </section>
+    </main>
 </div>
 
 <script src="app.js"></script>
