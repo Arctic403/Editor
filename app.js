@@ -72,11 +72,20 @@ function restoreSettings() {
     document.getElementById("tokenInput").value = localStorage.getItem("gh_token") || "";
     document.getElementById("repoInput").value = localStorage.getItem("gh_repo") || "";
     document.getElementById("branchInput").value = localStorage.getItem("gh_branch") || "main";
+    const aiInput = document.getElementById("aiTokenInput");
+    if (aiInput) {
+        aiInput.value = localStorage.getItem("openai_key") || "";
+    }
 }
 
 document.getElementById("tokenInput").addEventListener("input", e => localStorage.setItem("gh_token", e.target.value.trim()));
 document.getElementById("repoInput").addEventListener("input", e => localStorage.setItem("gh_repo", e.target.value.trim()));
 document.getElementById("branchInput").addEventListener("input", e => localStorage.setItem("gh_branch", e.target.value.trim()));
+
+const aiTokenElem = document.getElementById("aiTokenInput");
+if (aiTokenElem) {
+    aiTokenElem.addEventListener("input", e => localStorage.setItem("openai_key", e.target.value.trim()));
+}
 
 // ---------------------------
 // UI Control Event Bindings
@@ -106,6 +115,63 @@ function bindUIEvents() {
     if (searchInput) {
         searchInput.addEventListener("input", updateHighlights);
     }
+
+    bindClick("aiAssistBtn", async function () {
+        const apiKey = localStorage.getItem("openai_key");
+        if (!apiKey) return alert("Please set your OpenAI API Key in Settings first.");
+
+        const code = editor.value;
+        if (!code) return alert("Open a file or write some code first!");
+
+        const userPrompt = prompt("What would you like AI to do with this code?", "Fix bugs and improve formatting");
+        if (!userPrompt) return;
+
+        const aiBtn = document.getElementById("aiAssistBtn");
+        const originalText = aiBtn.textContent;
+        aiBtn.textContent = "⏳ Thinking...";
+        aiBtn.disabled = true;
+
+        try {
+            const response = await fetch("https://api.openai.com/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${apiKey}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    model: "gpt-4o-mini",
+                    messages: [
+                        {
+                            role: "system",
+                            content: "You are an expert coding assistant integrated into a mobile code editor. Return ONLY the code response inside raw text unless asked otherwise."
+                        },
+                        {
+                            role: "user",
+                            content: `${userPrompt}\n\nHere is the code:\n\`\`\`\n${code}\n\`\`\``
+                        }
+                    ],
+                    temperature: 0.2
+                })
+            });
+
+            const data = await response.json();
+            if (data.error) throw new Error(data.error.message);
+
+            const aiOutput = data.choices[0].message.content;
+
+            if (confirm("Replace current editor code with AI response?")) {
+                const cleanCode = aiOutput.replace(/^```[a-z]*\n/i, "").replace(/\n```$/, "");
+                editor.value = cleanCode;
+                updateLineNumbers();
+                updateHighlights();
+            }
+        } catch (err) {
+            alert("AI Request Failed: " + err.message);
+        } finally {
+            aiBtn.textContent = originalText;
+            aiBtn.disabled = false;
+        }
+    });
 
     bindClick("closeFileBtn", function () {
         editor.value = "";
