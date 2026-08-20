@@ -715,3 +715,90 @@ body.theme-monokai .gh-sync-card {
 .tree-row[draggable="true"]:active { cursor: grabbing; }
 .workspace-root-row { border-bottom: 1px solid rgba(255,255,255,.08); margin-bottom: 4px; }
 .root-drop-hint { font-size: 11px; opacity: .55; margin-left: auto; padding-left: 8px; }
+
+/* =========================================================
+   MOBILE CUT-OFF FIX — v12.1
+   Only prevents the Explorer shell from widening past the
+   phone viewport. No editor/file-manager behavior changes.
+   ========================================================= */
+@media (max-width: 700px) {
+    html,
+    body {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+    }
+
+    .app-container {
+        width: 100%;
+        max-width: 100vw;
+        min-width: 0;
+    }
+
+    .app-header,
+    .page-view,
+    .config-panel,
+    .toolbar,
+    .file-manager-section,
+    .fm-header {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+    }
+
+    .app-header {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .app-header h1 {
+        min-width: 0;
+        flex: 1 1 120px;
+        overflow-wrap: anywhere;
+    }
+
+    .header-controls {
+        min-width: 0;
+        max-width: 100%;
+        flex: 1 1 auto;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+    }
+
+    .view-tabs {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .toolbar {
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .toolbar::-webkit-scrollbar {
+        display: none;
+    }
+
+    .toolbar > .btn {
+        flex: 0 0 auto;
+        min-width: 92px;
+    }
+
+    .fm-header > span {
+        min-width: 0;
+    }
+
+    .fm-header > span:first-child {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .fm-header > span:last-child {
+        flex: 0 0 auto;
+        margin-left: 10px;
+    }
+}
