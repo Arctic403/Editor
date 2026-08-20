@@ -270,6 +270,33 @@ async function openSecondaryPaneFile(path){const f=await getFile(path);if(!f||f.
 function toggleQuickOpen(){const m=$("quickOpenModal");if(!m)return;const hidden=m.classList.toggle("hidden");if(!hidden){$("quickOpenInput").value="";$("quickOpenInput").focus();filterQuickOpenFiles("");}}
 async function filterQuickOpenFiles(q){const c=$("quickOpenResults");if(!c)return;const files=await getAllFiles();c.replaceChildren();const hits=files.filter(f=>f.path.toLowerCase().includes(q.toLowerCase())).sort((a,b)=>a.path.localeCompare(b.path));hits.forEach(f=>{const x=document.createElement("button");x.className="quick-item";x.textContent=f.path;x.onclick=()=>{toggleQuickOpen();openFile(f.path)};c.appendChild(x);});if(!hits.length)c.textContent="No matching files";}
 
+function toggleEditorFullscreen(){
+  const c=$("appContainer");
+  if(!c)return;
+  const on=!c.classList.contains("fullscreen");
+  c.classList.toggle("fullscreen",on);
+  document.body.classList.toggle("editor-is-fullscreen",on);
+  const b=$("fullscreenBtn");
+  if(b)b.textContent=on?"⛶ Exit":"⛶ Fullscreen";
+  requestAnimationFrame(()=>{
+    const e=$("editor");
+    if(e){e.style.height="100%";e.style.maxHeight="none";}
+    window.dispatchEvent(new Event("resize"));
+  });
+}
+
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Escape")return;
+  const c=$("appContainer");
+  if(c?.classList.contains("fullscreen")){
+    c.classList.remove("fullscreen");
+    document.body.classList.remove("editor-is-fullscreen");
+    const b=$("fullscreenBtn");
+    if(b)b.textContent="⛶ Fullscreen";
+    requestAnimationFrame(()=>window.dispatchEvent(new Event("resize")));
+  }
+});
+
 function bindUI(){
   bindClick("tabExplorer",()=>switchTab("explorer"));bindClick("tabEditor",()=>switchTab("editor"));bindClick("newFileBtn",()=>createFile(selectedFolderPath));bindClick("exportWorkspaceBtn",exportWorkspace);bindClick("quickOpenBtn",toggleQuickOpen);bindClick("closeQuickOpenModal",toggleQuickOpen);bindClick("splitPaneBtn",toggleSplitPane);bindClick("closeSplitBtn",toggleSplitPane);
   bindClick("saveLocalBtn",()=>saveCurrentFile(true));bindClick("closeFileBtn",()=>closeActiveFile(false));
@@ -278,7 +305,7 @@ function bindUI(){
   bindClick("replaceBtn",()=>{const e=$("editor"),q=$("searchInput")?.value,r=$("replaceInput")?.value;if(!e||!q)return;const i=e.value.indexOf(q);if(i<0)return alert("No match found.");e.value=e.value.slice(0,i)+r+e.value.slice(i+q.length);updateDirtyIndicator(true);updateLineNumbers();updateHighlights();autoSaveCurrentFile();});
   bindClick("replaceAllBtn",()=>{const e=$("editor"),q=$("searchInput")?.value,r=$("replaceInput")?.value;if(!e||!q)return;const re=new RegExp(escapeRegExp(q),"g"),matches=(e.value.match(re)||[]).length;if(!matches)return alert("No matches found.");if(!confirm(`Replace ${matches} occurrence(s)?`))return;e.value=e.value.replace(re,r);updateDirtyIndicator(true);updateLineNumbers();updateHighlights();autoSaveCurrentFile();});
   bindClick("jumpLineBtn",()=>{const n=parseInt(prompt("Jump to line:"),10);if(Number.isFinite(n)&&n>0)jumpToLine(n);});
-  bindClick("fullscreenBtn",()=>{const c=$("appContainer");const on=c.classList.toggle("fullscreen");$("fullscreenBtn").textContent=on?"⛶ Exit":"⛶ Fullscreen";});
+  bindClick("fullscreenBtn",toggleEditorFullscreen);
   bindClick("connectGhBtn",()=>{const token=$("tokenInput")?.value.trim();if(!token)return alert("Enter a GitHub token first.");localStorage.setItem("gh_token",token);fetchGitHubRepos(token);});
   $("repoSelect")?.addEventListener("change",async e=>{const repo=e.target.value;localStorage.setItem("gh_repo",repo);const token=$("tokenInput").value.trim();if(repo){await fetchGitHubBranches(token,repo);if(confirm(`Import files from ${repo}?`)){try{const n=await importRepoFromGitHub(token,repo,$("branchSelect").value||"main");alert(`Imported ${n} file(s).`);}catch(err){alert("Repository import failed: "+err.message);}}}});
   $("branchSelect")?.addEventListener("change",e=>localStorage.setItem("gh_branch",e.target.value));
