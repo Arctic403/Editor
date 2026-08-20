@@ -76,7 +76,7 @@ body, html {
 }
 /* #endregion */
 
-/* #region Layout & Navigation */
+/* #region Layout & Navigation (Fixed Header Clipping) */
 .app-header {
     background-color: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
@@ -85,29 +85,29 @@ body, html {
     align-items: center;
     padding: 6px 8px;
     flex-shrink: 0;
-    overflow: hidden;
+    overflow-x: auto; /* Allows header to scroll horizontally instead of cutting off */
+    -webkit-overflow-scrolling: touch;
 }
 
 .app-header h1 {
     font-size: 0.9rem;
     font-weight: 600;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 110px;
+    margin-right: 8px;
+    flex-shrink: 0;
 }
 
 .header-controls {
     display: flex;
     align-items: center;
-    gap: 4px;
-    overflow-x: auto;
-    flex-shrink: 1;
+    gap: 6px;
+    flex-shrink: 0;
 }
 
 .view-tabs {
     display: flex;
-    gap: 2px;
+    gap: 3px;
+    flex-shrink: 0;
 }
 
 .page-view {
@@ -231,6 +231,7 @@ button:hover, .btn:hover {
     overflow-y: auto;
     overflow-x: auto;
     padding: 4px;
+    -webkit-overflow-scrolling: touch;
 }
 
 .tree-node {
@@ -261,11 +262,6 @@ button:hover, .btn:hover {
     border-radius: 3px;
     cursor: pointer;
 }
-
-.delete-icon:hover {
-    color: var(--danger-color);
-    background-color: rgba(244, 71, 71, 0.1);
-}
 /* #endregion */
 
 /* #region Editor, Scrollbars & Split Panes */
@@ -287,6 +283,7 @@ button:hover, .btn:hover {
     border-bottom: 1px solid var(--border-color);
     flex-shrink: 0;
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .active-file-info {
@@ -295,9 +292,7 @@ button:hover, .btn:hover {
     gap: 6px;
     font-size: 0.75rem;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 30%;
+    flex-shrink: 0;
 }
 
 .save-indicator.clean { color: var(--success-color); }
@@ -305,10 +300,11 @@ button:hover, .btn:hover {
 
 .editor-actions {
     display: flex;
-    gap: 3px;
+    gap: 4px;
     align-items: center;
     overflow-x: auto;
-    flex-shrink: 1;
+    flex-shrink: 0;
+    padding-left: 6px;
 }
 
 .breadcrumb-bar {
@@ -320,14 +316,11 @@ button:hover, .btn:hover {
     white-space: nowrap;
     overflow-x: auto;
     flex-shrink: 0;
+    -webkit-overflow-scrolling: touch;
 }
 
 .breadcrumb-item {
     cursor: pointer;
-}
-
-.breadcrumb-item:hover {
-    color: var(--text-primary);
 }
 
 .block-navigation-bar {
@@ -340,6 +333,7 @@ button:hover, .btn:hover {
     overflow-x: auto;
     white-space: nowrap;
     flex-shrink: 0;
+    -webkit-overflow-scrolling: touch;
 }
 
 .block-nav-item {
@@ -420,9 +414,10 @@ button:hover, .btn:hover {
 .editor-wrapper {
     flex: 1;
     position: relative;
-    overflow: auto; /* Fixed to allow scrolling */
+    overflow: auto;
     display: flex;
     background: transparent;
+    -webkit-overflow-scrolling: touch;
 }
 
 .editor-textarea {
@@ -437,11 +432,11 @@ button:hover, .btn:hover {
     resize: none;
     outline: none;
     white-space: pre;
-    overflow-x: auto;
-    overflow-y: auto;
+    overflow: auto;
     line-height: 18px;
     z-index: 2;
     min-width: 100%;
+    -webkit-overflow-scrolling: touch;
 }
 
 .highlight-layer {
@@ -460,11 +455,6 @@ button:hover, .btn:hover {
     z-index: 1;
     margin: 0;
     background: transparent;
-}
-
-.search-highlight {
-    background-color: var(--highlight-bg);
-    border-radius: 2px;
 }
 /* #endregion */
 
