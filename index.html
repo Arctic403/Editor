@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Local Workspace + GitHub Push</title>
     <link rel="stylesheet" href="style.css">
 
@@ -10,42 +11,49 @@
 </head>
 <body>
 
-<h1>Local Workspace</h1>
+<div class="container">
+    <h1>Local Workspace</h1>
 
-<div id="tokenBox">
-    <label>GitHub Token:</label>
-    <input type="password" id="tokenInput" placeholder="Paste PAT here">
-</div>
+    <div class="config-grid">
+        <div class="input-group">
+            <label for="tokenInput">GitHub Token (PAT):</label>
+            <input type="password" id="tokenInput" placeholder="ghp_...">
+        </div>
 
-<div id="repoBox">
-    <label>Repo (owner/repo):</label>
-    <input type="text" id="repoInput" placeholder="username/repo">
-</div>
+        <div class="input-group">
+            <label for="repoInput">Repo (owner/repo):</label>
+            <input type="text" id="repoInput" placeholder="username/repository">
+        </div>
 
-<div id="branchBox">
-    <label>Branch:</label>
-    <input type="text" id="branchInput" value="main">
-</div>
+        <div class="input-group">
+            <label for="branchInput">Branch:</label>
+            <input type="text" id="branchInput" value="main">
+        </div>
+    </div>
 
-<hr>
+    <hr>
 
-<h2>Your Local Files</h2>
+    <h2>Your Local Files</h2>
 
-<div id="fileControls">
-    <button id="newFileBtn">New File</button>
-    <input type="file" id="uploadInput" multiple>
-</div>
+    <div id="fileControls">
+        <button id="newFileBtn" class="btn">New File</button>
+        <label for="uploadInput" class="btn btn-secondary">Upload Files / ZIP</label>
+        <input type="file" id="uploadInput" multiple style="display: none;">
+    </div>
 
-<ul id="fileList"></ul>
+    <ul id="fileList"></ul>
 
-<hr>
+    <hr>
 
-<h2>Editor</h2>
-<textarea id="editor"></textarea>
+    <h2>Editor</h2>
+    <div id="activeFileLabel">No file selected</div>
+    <textarea id="editor" placeholder="Select or create a file to start editing..."></textarea>
 
-<div id="editorControls">
-    <button id="saveLocalBtn">Save Locally</button>
-    <button id="pushGitHubBtn">Push to GitHub</button>
+    <div id="editorControls">
+        <button id="saveLocalBtn" class="btn">Save Locally</button>
+        <button id="pushGitHubBtn" class="btn btn-success">Push Current File</button>
+        <button id="pushAllGitHubBtn" class="btn btn-warning">Push All Workspace Files</button>
+    </div>
 </div>
 
 <script src="app.js"></script>
