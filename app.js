@@ -108,7 +108,7 @@ function bindUIEvents() {
         document.getElementById("fullscreenBtn").textContent = isFullscreen ? "⛶ Exit" : "⛶ Fullscreen";
     });
 
-    // FIND NEXT FUNCTIONALITY
+    // WORKING FIND & HIGHLIGHT FUNCTIONALITY
     bindClick("findNextBtn", function () {
         const searchVal = document.getElementById("searchInput").value;
         if (!searchVal) return alert("Enter text to find.");
@@ -125,15 +125,22 @@ function bindUIEvents() {
 
         if (index !== -1) {
             editor.focus();
+            
+            // Set text range selection (Highlights text)
             editor.setSelectionRange(index, index + searchVal.length);
             lastSearchIndex = index + searchVal.length;
+
+            // Scroll editor view directly to match location
+            const linesBefore = text.substring(0, index).split("\n").length;
+            const lineHeight = 20; // Approximate line height in px
+            editor.scrollTop = (linesBefore - 2) * lineHeight;
         } else {
             alert(`No matches found for "${searchVal}".`);
             lastSearchIndex = 0;
         }
     });
 
-    // REPLACE SINGLE WITH CONFIRMATION
+    // REPLACE SINGLE
     bindClick("replaceBtn", function () {
         const searchVal = document.getElementById("searchInput").value;
         const replaceVal = document.getElementById("replaceInput").value;
@@ -151,7 +158,7 @@ function bindUIEvents() {
         }
     });
 
-    // REPLACE ALL WITH MATCH COUNT & CONFIRMATION
+    // REPLACE ALL
     bindClick("replaceAllBtn", function () {
         const searchVal = document.getElementById("searchInput").value;
         const replaceVal = document.getElementById("replaceInput").value;
