@@ -16,7 +16,7 @@
 
     <!-- Configuration Bar -->
     <details class="config-panel" id="configPanel">
-        <summary>⚙️ GitHub Settings</summary>
+        <summary>⚙️ App Settings</summary>
         <div class="config-grid">
             <div class="input-group">
                 <label for="tokenInput">GitHub Token (PAT):</label>
@@ -29,6 +29,10 @@
             <div class="input-group">
                 <label for="branchInput">Branch:</label>
                 <input type="text" id="branchInput" value="main">
+            </div>
+            <div class="input-group">
+                <label for="aiTokenInput">OpenAI API Key:</label>
+                <input type="password" id="aiTokenInput" placeholder="sk-proj-...">
             </div>
         </div>
     </details>
@@ -55,6 +59,7 @@
         <div class="editor-header">
             <span id="activeFileLabel">No file selected</span>
             <div class="editor-actions">
+                <button id="aiAssistBtn" class="btn btn-sm btn-secondary" type="button">🤖 Ask AI</button>
                 <button id="searchToggleBtn" class="btn btn-sm btn-secondary" type="button">🔍 Find</button>
                 <button id="fullscreenBtn" class="btn btn-sm btn-secondary" type="button">⛶ Fullscreen</button>
                 <button id="saveLocalBtn" class="btn btn-sm" type="button">💾 Save</button>
