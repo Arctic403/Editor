@@ -790,6 +790,10 @@ function saveCurrentFile(showAlert = false) {
         return;
     }
 
+    if (showAlert) {
+        if (!confirm(`Save changes to local database for "${name}"?`)) return;
+    }
+
     saveFileToDb(name, editor.value).then(() => {
         updateDirtyIndicator(false);
         if (showAlert) alert("Saved locally!");
