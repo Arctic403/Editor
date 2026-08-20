@@ -21,18 +21,19 @@
             <div class="input-group">
                 <label for="tokenInput">GitHub Token (PAT):</label>
                 <input type="password" id="tokenInput" placeholder="ghp_...">
+                <button id="connectGhBtn" class="btn btn-sm btn-secondary" type="button" style="margin-top: 5px;">Fetch Repositories</button>
             </div>
             <div class="input-group">
-                <label for="repoInput">Repo (owner/repo):</label>
-                <input type="text" id="repoInput" placeholder="username/repository">
+                <label for="repoSelect">Repository:</label>
+                <select id="repoSelect" class="config-select">
+                    <option value="">-- Enter PAT to load repos --</option>
+                </select>
             </div>
             <div class="input-group">
-                <label for="branchInput">Branch:</label>
-                <input type="text" id="branchInput" value="main">
-            </div>
-            <div class="input-group">
-                <label for="aiTokenInput">OpenAI API Key:</label>
-                <input type="password" id="aiTokenInput" placeholder="sk-proj-...">
+                <label for="branchSelect">Branch:</label>
+                <select id="branchSelect" class="config-select">
+                    <option value="">-- Select a repo first --</option>
+                </select>
             </div>
         </div>
     </details>
@@ -59,7 +60,6 @@
         <div class="editor-header">
             <span id="activeFileLabel">No file selected</span>
             <div class="editor-actions">
-                <button id="aiAssistBtn" class="btn btn-sm btn-secondary" type="button">🤖 Ask AI</button>
                 <button id="searchToggleBtn" class="btn btn-sm btn-secondary" type="button">🔍 Find</button>
                 <button id="fullscreenBtn" class="btn btn-sm btn-secondary" type="button">⛶ Fullscreen</button>
                 <button id="saveLocalBtn" class="btn btn-sm" type="button">💾 Save</button>
