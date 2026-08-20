@@ -15,7 +15,7 @@ function bindClick(id, handler) {
     }
 }
 
-// Check if raw file data contains standard printable text (Fallback for unknown file types)
+// Check if raw file data contains standard printable text
 function isTextContent(str) {
     if (!str) return true;
     let nonPrintable = 0;
@@ -26,6 +26,20 @@ function isTextContent(str) {
         }
     }
     return (nonPrintable / Math.min(str.length, 1000)) < 0.1;
+}
+
+// Decode Base64 Strings Back to Plain Text
+function decodeBase64Text(base64Str) {
+    try {
+        const cleanBase64 = base64Str.replace(/^data:application\/octet-stream;base64,/, "");
+        const binaryString = atob(cleanBase64);
+        if (isTextContent(binaryString)) {
+            return binaryString;
+        }
+    } catch (e) {
+        // Return original if decoding fails
+    }
+    return base64Str;
 }
 
 // ---------------------------
@@ -215,7 +229,7 @@ function loadFiles() {
         const treeRoot = buildFileTreeStructure(files);
         const container = document.getElementById("fileTree");
         container.innerHTML = "";
-        renderTree(treeRoot, container);
+        renderTree(treeRoot, container, "");
     };
 }
 
@@ -236,7 +250,7 @@ function buildFileTreeStructure(files) {
     return root;
 }
 
-function renderTree(node, container) {
+function renderTree(node, container, currentFolderPath) {
     for (const key in node) {
         const item = node[key];
         const treeNode = document.createElement("div");
@@ -260,31 +274,31 @@ function renderTree(node, container) {
                 </div>
             `;
         } else {
+            const folderPath = currentFolderPath ? `${currentFolderPath}/${key}` : key;
             const childrenContainer = document.createElement("div");
             childrenContainer.className = "tree-children";
             childrenContainer.style.display = "none";
 
             treeNode.innerHTML = `
-                <div class="tree-row" onclick="toggleFolder(this)">
-                    <span class="tree-label">📁 <strong>${key}</strong></span>
+                <div class="tree-row">
+                    <span class="tree-label" onclick="toggleFolder(this)">📁 <strong>${key}</strong></span>
+                    <span class="delete-icon" title="Delete Folder" onclick="deleteFolder('${folderPath}')">🗑️</span>
                 </div>
             `;
-            renderTree(item._children, childrenContainer);
+            renderTree(item._children, childrenContainer, folderPath);
             treeNode.appendChild(childrenContainer);
         }
         container.appendChild(treeNode);
     }
 }
 
-function toggleFolder(rowElement) {
+function toggleFolder(labelElement) {
+    const rowElement = labelElement.parentElement;
     const children = rowElement.nextElementSibling;
     if (children) {
         const isHidden = children.style.display === "none";
         children.style.display = isHidden ? "block" : "none";
-        const folderIcon = rowElement.querySelector(".tree-label");
-        if (folderIcon) {
-            folderIcon.innerHTML = folderIcon.innerHTML.replace(isHidden ? "📁" : "📂", isHidden ? "📂" : "📁");
-        }
+        labelElement.innerHTML = labelElement.innerHTML.replace(isHidden ? "📁" : "📂", isHidden ? "📂" : "📁");
     }
 }
 
@@ -313,7 +327,6 @@ async function importRegularFile(file) {
         reader.onload = function () {
             let content = reader.result;
             if (typeof content !== "string" || !isTextContent(content)) {
-                // If unknown extension contains non-printable data, convert to base64 Data URL
                 const base64Reader = new FileReader();
                 base64Reader.onload = function () {
                     saveFileToDb(file.name, base64Reader.result).then(resolve);
@@ -358,7 +371,8 @@ async function unpackZip(zipFile) {
             const entry = zip.files[path];
             if (entry.dir) continue;
 
-            const isText = entry.name.match(EXTENSION_REGEX);
+            const normalizedName = entry.name.toLowerCase();
+            const isText = EXTENSION_REGEX.test(normalizedName);
             let content;
 
             if (isText) {
@@ -402,7 +416,13 @@ function openFile(name) {
 
     req.onsuccess = function () {
         const editor = document.getElementById("editor");
-        editor.value = req.result.content;
+        let rawContent = req.result ? req.result.content : "";
+
+        if (typeof rawContent === "string" && rawContent.startsWith("data:application/octet-stream;base64,")) {
+            rawContent = decodeBase64Text(rawContent);
+        }
+
+        editor.value = rawContent;
         editor.dataset.filename = name;
         document.getElementById("activeFileLabel").textContent = "Editing: " + name;
         updateLineNumbers();
@@ -423,6 +443,36 @@ function deleteFile(name) {
             updateLineNumbers();
         }
         loadFiles();
+    };
+}
+
+function deleteFolder(folderPath) {
+    if (!confirm(`Delete folder "${folderPath}" and all contained files?`)) return;
+
+    const tx = db.transaction("files", "readwrite");
+    const store = tx.objectStore("files");
+    const req = store.getAllKeys();
+
+    req.onsuccess = function () {
+        const keys = req.result;
+        const prefix = folderPath + "/";
+        const editor = document.getElementById("editor");
+
+        keys.forEach(key => {
+            if (key === folderPath || key.startsWith(prefix)) {
+                store.delete(key);
+                if (editor.dataset.filename === key) {
+                    editor.value = "";
+                    editor.dataset.filename = "";
+                    document.getElementById("activeFileLabel").textContent = "No file selected";
+                }
+            }
+        });
+
+        tx.oncomplete = () => {
+            updateLineNumbers();
+            loadFiles();
+        };
     };
 }
 
