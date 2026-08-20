@@ -1,6 +1,7 @@
 * {
     box-sizing: border-box;
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
 }
 
 html, body {
@@ -129,7 +130,7 @@ body.theme-monokai .line-numbers {
     display: flex;
 }
 
-/* iOS Safari Fullscreen Toggle Rules */
+/* Fullscreen Toggle Rules */
 .app-container.fullscreen {
     padding: 0 !important;
 }
@@ -263,7 +264,7 @@ select.config-select option {
 .btn-danger { background: #a12626; }
 .btn-sm { flex: initial; padding: 6px 10px; font-size: 0.75rem; }
 
-/* File Manager Window (Full-height inside Explorer View) */
+/* File Manager Window */
 .file-manager-section {
     background: #252526;
     border: 1px solid #3c3c3c;
@@ -305,7 +306,6 @@ select.config-select option {
 
 .tree-row:hover { background: #2a2d2e; }
 
-/* Active Folder Selection & Drag/Drop Highlights */
 .tree-row.selected-folder {
     background: #094771 !important;
     color: #ffffff;
@@ -511,6 +511,10 @@ select.config-select option {
     line-height: 1.35;
     white-space: pre;
     tab-size: 4;
+    letter-spacing: normal;
+    word-spacing: normal;
+    font-variant-ligatures: none;
+    -webkit-font-smoothing: antialiased;
 }
 
 /* Background Highlight Render Layer */
@@ -518,6 +522,14 @@ select.config-select option {
     pointer-events: none;
     overflow: hidden;
     z-index: 1;
+    background: transparent !important;
+}
+
+.highlight-layer code {
+    font-family: inherit !important;
+    font-size: inherit !important;
+    line-height: inherit !important;
+    padding: 0 !important;
     background: transparent !important;
 }
 
@@ -530,6 +542,11 @@ select.config-select option {
     z-index: 2;
     overflow-x: auto;
     overflow-y: auto;
+}
+
+.editor-textarea::selection {
+    background: rgba(100, 150, 250, 0.4);
+    color: transparent;
 }
 
 /* Find Match Visual Styling */
@@ -545,6 +562,7 @@ mark.search-highlight {
     display: flex;
     gap: 4px;
     padding: 6px;
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
     background: #252526;
     border-top: 1px solid #3c3c3c;
     overflow-x: auto;
