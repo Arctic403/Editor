@@ -9,7 +9,7 @@
 </head>
 <body>
 
-<div class="app-container">
+<div class="app-container" id="appContainer">
     <header class="app-header">
         <h1>Workspace Explorer</h1>
     </header>
@@ -37,12 +37,12 @@
     <div class="toolbar">
         <button id="newFileBtn" class="btn">📄 New File</button>
         <label for="uploadInput" class="btn btn-secondary">📦 Import / ZIP</label>
-        <input type="file" id="uploadInput" multiple accept=".zip,*/*" style="display: none;">
+        <input type="file" id="uploadInput" multiple accept="*/*" style="display: none;">
         <button id="pushAllGitHubBtn" class="btn btn-warning">🚀 Push All</button>
     </div>
 
     <!-- Windows File Manager Section -->
-    <section class="file-manager-section">
+    <section class="file-manager-section" id="explorerSection">
         <div class="fm-header">
             <span>📁 Explorer</span>
             <span id="itemCount">0 items</span>
@@ -51,15 +51,31 @@
     </section>
 
     <!-- Code Editor Section -->
-    <section class="editor-section">
+    <section class="editor-section" id="editorSection">
         <div class="editor-header">
             <span id="activeFileLabel">No file selected</span>
             <div class="editor-actions">
+                <button id="searchToggleBtn" class="btn btn-sm btn-secondary">🔍 Find</button>
+                <button id="fullscreenBtn" class="btn btn-sm btn-secondary">⛶ Fullscreen</button>
                 <button id="saveLocalBtn" class="btn btn-sm">💾 Save</button>
                 <button id="pushGitHubBtn" class="btn btn-sm btn-success">☁️ Push</button>
+                <button id="closeFileBtn" class="btn btn-sm btn-danger">✕ Close</button>
             </div>
         </div>
-        <textarea id="editor" placeholder="Select a file from the explorer to edit..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+
+        <!-- Search & Replace Bar -->
+        <div id="searchReplaceBar" class="search-bar hidden">
+            <input type="text" id="searchInput" placeholder="Find text...">
+            <input type="text" id="replaceInput" placeholder="Replace with...">
+            <button id="replaceBtn" class="btn btn-sm">Replace</button>
+            <button id="replaceAllBtn" class="btn btn-sm btn-secondary">All</button>
+        </div>
+
+        <!-- Line Numbers + Editor Container -->
+        <div class="editor-workspace">
+            <div id="lineNumbers" class="line-numbers">1</div>
+            <textarea id="editor" placeholder="Select a file from the explorer to edit..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+        </div>
     </section>
 </div>
 
