@@ -3,57 +3,64 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Local Workspace + GitHub Push</title>
+    <title>Mobile Workspace & File Manager</title>
     <link rel="stylesheet" href="style.css">
-
-    <!-- iOS Compatible JSZip CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
 
-<div class="container">
-    <h1>Local Workspace</h1>
+<div class="app-container">
+    <header class="app-header">
+        <h1>Workspace Explorer</h1>
+    </header>
 
-    <div class="config-grid">
-        <div class="input-group">
-            <label for="tokenInput">GitHub Token (PAT):</label>
-            <input type="password" id="tokenInput" placeholder="ghp_...">
+    <!-- Configuration Bar -->
+    <details class="config-panel">
+        <summary>⚙️ GitHub Settings</summary>
+        <div class="config-grid">
+            <div class="input-group">
+                <label for="tokenInput">GitHub Token (PAT):</label>
+                <input type="password" id="tokenInput" placeholder="ghp_...">
+            </div>
+            <div class="input-group">
+                <label for="repoInput">Repo (owner/repo):</label>
+                <input type="text" id="repoInput" placeholder="username/repository">
+            </div>
+            <div class="input-group">
+                <label for="branchInput">Branch:</label>
+                <input type="text" id="branchInput" value="main">
+            </div>
         </div>
+    </details>
 
-        <div class="input-group">
-            <label for="repoInput">Repo (owner/repo):</label>
-            <input type="text" id="repoInput" placeholder="username/repository">
-        </div>
-
-        <div class="input-group">
-            <label for="branchInput">Branch:</label>
-            <input type="text" id="branchInput" value="main">
-        </div>
-    </div>
-
-    <hr>
-
-    <h2>Your Local Files</h2>
-
-    <div id="fileControls">
-        <button id="newFileBtn" class="btn">New File</button>
-        <label for="uploadInput" class="btn btn-secondary">Upload Files / ZIP</label>
+    <!-- Action Toolbar -->
+    <div class="toolbar">
+        <button id="newFileBtn" class="btn">📄 New File</button>
+        <label for="uploadInput" class="btn btn-secondary">📦 Import / ZIP</label>
         <input type="file" id="uploadInput" multiple accept=".zip,*/*" style="display: none;">
+        <button id="pushAllGitHubBtn" class="btn btn-warning">🚀 Push All</button>
     </div>
 
-    <ul id="fileList"></ul>
+    <!-- Windows File Manager Section -->
+    <section class="file-manager-section">
+        <div class="fm-header">
+            <span>📁 Explorer</span>
+            <span id="itemCount">0 items</span>
+        </div>
+        <div id="fileTree" class="file-tree"></div>
+    </section>
 
-    <hr>
-
-    <h2>Editor</h2>
-    <div id="activeFileLabel">No file selected</div>
-    <textarea id="editor" placeholder="Select or create a file to start editing..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
-
-    <div id="editorControls">
-        <button id="saveLocalBtn" class="btn">Save Locally</button>
-        <button id="pushGitHubBtn" class="btn btn-success">Push Current File</button>
-        <button id="pushAllGitHubBtn" class="btn btn-warning">Push All Workspace Files</button>
-    </div>
+    <!-- Code Editor Section -->
+    <section class="editor-section">
+        <div class="editor-header">
+            <span id="activeFileLabel">No file selected</span>
+            <div class="editor-actions">
+                <button id="saveLocalBtn" class="btn btn-sm">💾 Save</button>
+                <button id="pushGitHubBtn" class="btn btn-sm btn-success">☁️ Push</button>
+            </div>
+        </div>
+        <textarea id="editor" placeholder="Select a file from the explorer to edit..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+    </section>
 </div>
 
 <script src="app.js"></script>
