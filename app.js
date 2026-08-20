@@ -2,11 +2,13 @@
 // IndexedDB Setup
 // ---------------------------
 let db;
-const request = indexedDB.open("LocalWorkspaceDB", 1);
+const request = indexedDB.open("LocalWorkspaceDB", 2);
 
 request.onupgradeneeded = function (event) {
     db = event.target.result;
-    db.createObjectStore("files", { keyPath: "name" });
+    if (!db.objectStoreNames.contains("files")) {
+        db.createObjectStore("files", { keyPath: "name" });
+    }
 };
 
 request.onsuccess = function (event) {
@@ -55,21 +57,74 @@ document.getElementById("newFileBtn").onclick = function () {
 };
 
 // ---------------------------
-// Upload File
+// Upload File or ZIP
 // ---------------------------
-document.getElementById("uploadInput").onchange = function (event) {
-    const file = event.target.files[0];
+document.getElementById("uploadInput").onchange = async function (event) {
+    const files = event.target.files;
+
+    for (const file of files) {
+        if (file.name.toLowerCase().endsWith(".zip")) {
+            await unpackZip(file);
+        } else {
+            await importRegularFile(file);
+        }
+    }
+
+    loadFiles();
+};
+
+// ---------------------------
+// Handle regular file
+// ---------------------------
+async function importRegularFile(file) {
     const reader = new FileReader();
 
-    reader.onload = function () {
-        const tx = db.transaction("files", "readwrite");
-        const store = tx.objectStore("files");
-        store.put({ name: file.name, content: reader.result });
-        tx.oncomplete = loadFiles;
-    };
+    return new Promise(resolve => {
+        reader.onload = function () {
+            const tx = db.transaction("files", "readwrite");
+            const store = tx.objectStore("files");
 
-    reader.readAsText(file);
-};
+            store.put({
+                name: file.name,
+                content: reader.result
+            });
+
+            tx.oncomplete = resolve;
+        };
+
+        reader.readAsText(file);
+    });
+}
+
+// ---------------------------
+// Handle ZIP file
+// ---------------------------
+async function unpackZip(zipFile) {
+    const arrayBuffer = await zipFile.arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
+
+    const tx = db.transaction("files", "readwrite");
+    const store = tx.objectStore("files");
+
+    for (const filename of Object.keys(zip.files)) {
+        const entry = zip.files[filename];
+
+        if (entry.dir) continue; // skip folders
+
+        // Skip binary files
+        const isBinary = /\.(png|jpg|jpeg|gif|bmp|exe|dll|bin)$/i.test(filename);
+        if (isBinary) continue;
+
+        const content = await entry.async("string");
+
+        store.put({
+            name: filename,
+            content: content
+        });
+    }
+
+    return new Promise(resolve => tx.oncomplete = resolve);
+}
 
 // ---------------------------
 // Open File
