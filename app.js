@@ -1,8 +1,9 @@
-const TEXT_EXTENSIONS_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|html|htm|md|xml|cfg|ini|lua|py|cpp|c|h|hpp|cs|java|go|rs|php|rb|sh|bat|ps1|sql|yaml|yml|toml|env|gitignore|properties|log)$/i;
+// Universal Text File Identifier (Matches over 50+ common code/data extensions)
+const EXTENSION_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|html|htm|md|xml|cfg|ini|lua|py|cpp|c|h|hpp|cs|java|go|rs|php|rb|sh|bat|ps1|sql|yaml|yml|toml|env|gitignore|properties|log|swift|kt|kts|dart|r|m|mm|vue|svelte|astro|graphql|gql|prisma|diff|patch|dockerfile|makefile)$/i;
 
 let db;
 
-// Safe Event Listener Assignment (iOS Safari Compatible)
+// Safe Event Listener Binding (iOS Safari + Chrome Mobile Compatible)
 function bindClick(id, handler) {
     const element = document.getElementById(id);
     if (element) {
@@ -12,6 +13,19 @@ function bindClick(id, handler) {
             handler(e);
         }, { passive: false });
     }
+}
+
+// Check if raw file data contains standard printable text (Fallback for unknown file types)
+function isTextContent(str) {
+    if (!str) return true;
+    let nonPrintable = 0;
+    for (let i = 0; i < Math.min(str.length, 1000); i++) {
+        const code = str.charCodeAt(i);
+        if (code < 9 || (code > 13 && code < 32)) {
+            nonPrintable++;
+        }
+    }
+    return (nonPrintable / Math.min(str.length, 1000)) < 0.1;
 }
 
 // ---------------------------
@@ -56,13 +70,11 @@ function bindUIEvents() {
     const editor = document.getElementById("editor");
     const lineNumbers = document.getElementById("lineNumbers");
 
-    // Line Numbers Sync
     editor.addEventListener("input", updateLineNumbers);
     editor.addEventListener("scroll", function () {
         lineNumbers.scrollTop = editor.scrollTop;
     });
 
-    // Close File
     bindClick("closeFileBtn", function () {
         editor.value = "";
         editor.dataset.filename = "";
@@ -70,20 +82,17 @@ function bindUIEvents() {
         updateLineNumbers();
     });
 
-    // Toggle Search Bar
     bindClick("searchToggleBtn", function () {
         const bar = document.getElementById("searchReplaceBar");
         bar.classList.toggle("hidden");
     });
 
-    // Toggle Fullscreen
     bindClick("fullscreenBtn", function () {
         const appContainer = document.getElementById("appContainer");
         const isFullscreen = appContainer.classList.toggle("fullscreen");
         document.getElementById("fullscreenBtn").textContent = isFullscreen ? "⛶ Exit" : "⛶ Fullscreen";
     });
 
-    // Replace Single Match
     bindClick("replaceBtn", function () {
         const searchVal = document.getElementById("searchInput").value;
         const replaceVal = document.getElementById("replaceInput").value;
@@ -93,7 +102,6 @@ function bindUIEvents() {
         updateLineNumbers();
     });
 
-    // Replace All Matches
     bindClick("replaceAllBtn", function () {
         const searchVal = document.getElementById("searchInput").value;
         const replaceVal = document.getElementById("replaceInput").value;
@@ -104,7 +112,6 @@ function bindUIEvents() {
         updateLineNumbers();
     });
 
-    // Save File
     bindClick("saveLocalBtn", function () {
         const name = editor.dataset.filename;
         if (!name) return alert("Select a file first.");
@@ -117,9 +124,8 @@ function bindUIEvents() {
         tx.oncomplete = () => alert("Saved!");
     });
 
-    // New File
     bindClick("newFileBtn", function () {
-        const name = prompt("Enter file path (e.g., src/index.js):");
+        const name = prompt("Enter file path (e.g., src/components/App.tsx):");
         if (!name) return;
 
         const tx = db.transaction("files", "readwrite");
@@ -132,7 +138,6 @@ function bindUIEvents() {
         };
     });
 
-    // Push Single
     bindClick("pushGitHubBtn", async function () {
         const token = document.getElementById("tokenInput").value.trim();
         const repo = document.getElementById("repoInput").value.trim();
@@ -150,7 +155,6 @@ function bindUIEvents() {
         }
     });
 
-    // Push All
     bindClick("pushAllGitHubBtn", async function () {
         const token = document.getElementById("tokenInput").value.trim();
         const repo = document.getElementById("repoInput").value.trim();
@@ -196,7 +200,7 @@ function updateLineNumbers() {
 }
 
 // ---------------------------
-// File Tree Logic
+// Universal File & Directory Rendering
 // ---------------------------
 function loadFiles() {
     if (!db) return;
@@ -241,10 +245,13 @@ function renderTree(node, container) {
         if (item._isFile) {
             const ext = key.split('.').pop().toLowerCase();
             let icon = "📄";
-            if (["html", "htm"].includes(ext)) icon = "🌐";
-            else if (["css", "scss"].includes(ext)) icon = "🎨";
-            else if (["js", "ts", "jsx", "tsx", "json"].includes(ext)) icon = "⚡";
-            else if (["py", "cpp", "c", "h", "cs", "java", "rs", "go"].includes(ext)) icon = "⚙️";
+            
+            if (["html", "htm", "vue", "svelte", "astro"].includes(ext)) icon = "🌐";
+            else if (["css", "scss", "sass", "less"].includes(ext)) icon = "🎨";
+            else if (["js", "ts", "jsx", "tsx", "mjs", "cjs", "json"].includes(ext)) icon = "⚡";
+            else if (["py", "cpp", "c", "h", "hpp", "cs", "java", "rs", "go", "swift", "kt"].includes(ext)) icon = "⚙️";
+            else if (["md", "txt", "log"].includes(ext)) icon = "📝";
+            else if (["sql", "db"].includes(ext)) icon = "🗄️";
 
             treeNode.innerHTML = `
                 <div class="tree-row">
@@ -282,7 +289,7 @@ function toggleFolder(rowElement) {
 }
 
 // ---------------------------
-// File Import
+// Multi-Format File Import Logic
 // ---------------------------
 document.getElementById("uploadInput").onchange = async function (event) {
     const files = event.target.files;
@@ -304,18 +311,29 @@ async function importRegularFile(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = function () {
-            const tx = db.transaction("files", "readwrite");
-            const store = tx.objectStore("files");
-            store.put({ name: file.name, content: reader.result });
-            tx.oncomplete = resolve;
+            let content = reader.result;
+            if (typeof content !== "string" || !isTextContent(content)) {
+                // If unknown extension contains non-printable data, convert to base64 Data URL
+                const base64Reader = new FileReader();
+                base64Reader.onload = function () {
+                    saveFileToDb(file.name, base64Reader.result).then(resolve);
+                };
+                base64Reader.readAsDataURL(file);
+            } else {
+                saveFileToDb(file.name, content).then(resolve);
+            }
         };
         reader.onerror = reject;
+        reader.readAsText(file);
+    });
+}
 
-        if (file.name.match(TEXT_EXTENSIONS_REGEX)) {
-            reader.readAsText(file);
-        } else {
-            reader.readAsDataURL(file);
-        }
+function saveFileToDb(name, content) {
+    return new Promise((resolve) => {
+        const tx = db.transaction("files", "readwrite");
+        const store = tx.objectStore("files");
+        store.put({ name, content });
+        tx.oncomplete = resolve;
     });
 }
 
@@ -340,14 +358,19 @@ async function unpackZip(zipFile) {
             const entry = zip.files[path];
             if (entry.dir) continue;
 
-            const isText = entry.name.match(TEXT_EXTENSIONS_REGEX);
+            const isText = entry.name.match(EXTENSION_REGEX);
             let content;
 
             if (isText) {
                 content = await entry.async("string");
             } else {
-                const base64 = await entry.async("base64");
-                content = "data:application/octet-stream;base64," + base64;
+                const str = await entry.async("string");
+                if (isTextContent(str)) {
+                    content = str;
+                } else {
+                    const base64 = await entry.async("base64");
+                    content = "data:application/octet-stream;base64," + base64;
+                }
             }
 
             extractedFiles.push({ name: entry.name, content });
@@ -370,7 +393,7 @@ async function unpackZip(zipFile) {
 }
 
 // ---------------------------
-// File Operations
+// File Workspace Operations
 // ---------------------------
 function openFile(name) {
     const tx = db.transaction("files", "readonly");
@@ -404,7 +427,7 @@ function deleteFile(name) {
 }
 
 // ---------------------------
-// GitHub Push
+// GitHub Push Integration
 // ---------------------------
 async function pushFileToGitHub(name, content, token, repo, branch) {
     const url = `https://api.github.com/repos/${repo}/contents/${name}`;
