@@ -22,6 +22,17 @@ body {
     gap: 10px;
 }
 
+.app-container.fullscreen #explorerSection,
+.app-container.fullscreen .config-panel,
+.app-container.fullscreen .toolbar,
+.app-container.fullscreen .app-header {
+    display: none !important;
+}
+
+.app-container.fullscreen {
+    padding: 0;
+}
+
 .app-header h1 {
     font-size: 1.1rem;
     margin: 0;
@@ -88,16 +99,17 @@ input[type="text"], input[type="password"] {
 .btn-secondary { background: #3c3c3c; }
 .btn-warning { background: #b89500; }
 .btn-success { background: #16825d; }
+.btn-danger { background: #a12626; }
 .btn-sm { flex: initial; padding: 4px 8px; font-size: 0.75rem; }
 
-/* File Manager Window (Explorer) */
+/* File Manager Window */
 .file-manager-section {
     background: #252526;
     border: 1px solid #3c3c3c;
     border-radius: 6px;
     display: flex;
     flex-direction: column;
-    max-height: 220px;
+    max-height: 200px;
     overflow: hidden;
 }
 
@@ -116,10 +128,7 @@ input[type="text"], input[type="password"] {
     padding: 6px 0;
 }
 
-/* Directory Tree Elements */
-.tree-node {
-    user-select: none;
-}
+.tree-node { user-select: none; }
 
 .tree-row {
     display: flex;
@@ -130,9 +139,7 @@ input[type="text"], input[type="password"] {
     cursor: pointer;
 }
 
-.tree-row:active, .tree-row.selected {
-    background: #37373d;
-}
+.tree-row:active { background: #37373d; }
 
 .tree-label {
     display: flex;
@@ -172,17 +179,66 @@ input[type="text"], input[type="password"] {
     justify-content: space-between;
     align-items: center;
     font-size: 0.8rem;
+    gap: 6px;
+    overflow-x: auto;
+}
+
+.editor-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.search-bar {
+    display: flex;
+    gap: 6px;
+    padding: 6px;
+    background: #252526;
+    border-bottom: 1px solid #3c3c3c;
+}
+
+.search-bar.hidden { display: none; }
+
+.search-bar input {
+    flex: 1;
+    font-size: 0.75rem;
+    padding: 4px 6px;
+}
+
+.editor-workspace {
+    flex: 1;
+    display: flex;
+    position: relative;
+    overflow: hidden;
+    background: #1e1e1e;
+}
+
+.line-numbers {
+    width: 35px;
+    padding: 10px 4px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.85rem;
+    line-height: 1.35;
+    color: #858585;
+    background: #1e1e1e;
+    text-align: right;
+    border-right: 1px solid #333;
+    user-select: none;
+    overflow: hidden;
+    white-space: pre;
 }
 
 #editor {
     flex: 1;
-    width: 100%;
     background: #1e1e1e;
     color: #d4d4d4;
     border: none;
     padding: 10px;
     font-family: Consolas, "Courier New", monospace;
     font-size: 0.85rem;
+    line-height: 1.35;
     resize: none;
     outline: none;
+    white-space: pre;
+    overflow-x: auto;
+    overflow-y: auto;
 }
