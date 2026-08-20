@@ -2,6 +2,7 @@
 const EXTENSION_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|html|htm|md|xml|cfg|ini|lua|py|cpp|c|h|hpp|cs|java|go|rs|php|rb|sh|bat|ps1|sql|yaml|yml|toml|env|gitignore|properties|log|swift|kt|kts|dart|r|m|mm|vue|svelte|astro|graphql|gql|prisma|diff|patch|dockerfile|makefile)$/i;
 
 let db;
+let lastSearchIndex = 0;
 
 // Safe Event Listener Binding (iOS Safari + Chrome Mobile Compatible)
 function bindClick(id, handler) {
@@ -107,23 +108,68 @@ function bindUIEvents() {
         document.getElementById("fullscreenBtn").textContent = isFullscreen ? "⛶ Exit" : "⛶ Fullscreen";
     });
 
+    // FIND NEXT FUNCTIONALITY
+    bindClick("findNextBtn", function () {
+        const searchVal = document.getElementById("searchInput").value;
+        if (!searchVal) return alert("Enter text to find.");
+
+        const text = editor.value;
+        const lowerText = text.toLowerCase();
+        const lowerSearch = searchVal.toLowerCase();
+
+        let index = lowerText.indexOf(lowerSearch, lastSearchIndex);
+
+        if (index === -1) {
+            index = lowerText.indexOf(lowerSearch, 0); // Loop back to start
+        }
+
+        if (index !== -1) {
+            editor.focus();
+            editor.setSelectionRange(index, index + searchVal.length);
+            lastSearchIndex = index + searchVal.length;
+        } else {
+            alert(`No matches found for "${searchVal}".`);
+            lastSearchIndex = 0;
+        }
+    });
+
+    // REPLACE SINGLE WITH CONFIRMATION
     bindClick("replaceBtn", function () {
         const searchVal = document.getElementById("searchInput").value;
         const replaceVal = document.getElementById("replaceInput").value;
-        if (!searchVal) return;
 
-        editor.value = editor.value.replace(searchVal, replaceVal);
-        updateLineNumbers();
+        if (!searchVal) return alert("Enter text to find.");
+
+        const text = editor.value;
+        if (!text.includes(searchVal)) {
+            return alert(`Text "${searchVal}" not found.`);
+        }
+
+        if (confirm(`Replace next instance of "${searchVal}" with "${replaceVal}"?`)) {
+            editor.value = text.replace(searchVal, replaceVal);
+            updateLineNumbers();
+        }
     });
 
+    // REPLACE ALL WITH MATCH COUNT & CONFIRMATION
     bindClick("replaceAllBtn", function () {
         const searchVal = document.getElementById("searchInput").value;
         const replaceVal = document.getElementById("replaceInput").value;
-        if (!searchVal) return;
+
+        if (!searchVal) return alert("Enter text to find.");
 
         const regex = new RegExp(escapeRegExp(searchVal), "g");
-        editor.value = editor.value.replace(regex, replaceVal);
-        updateLineNumbers();
+        const matches = (editor.value.match(regex) || []).length;
+
+        if (matches === 0) {
+            return alert(`No occurrences of "${searchVal}" found.`);
+        }
+
+        if (confirm(`Replace all ${matches} occurrence(s) of "${searchVal}" with "${replaceVal}"?`)) {
+            editor.value = editor.value.replace(regex, replaceVal);
+            updateLineNumbers();
+            alert(`Replaced ${matches} instance(s).`);
+        }
     });
 
     bindClick("saveLocalBtn", function () {
@@ -425,6 +471,7 @@ function openFile(name) {
         editor.value = rawContent;
         editor.dataset.filename = name;
         document.getElementById("activeFileLabel").textContent = "Editing: " + name;
+        lastSearchIndex = 0;
         updateLineNumbers();
     };
 }
