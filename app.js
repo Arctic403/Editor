@@ -724,15 +724,20 @@ function bindUIEvents() {
 
         const token = tokenInput ? tokenInput.value.trim() : "";
         const repo = repoSelect ? repoSelect.value : "";
-        const branch = branchSelect ? branchSelect.value : "";
+        const branch = (branchSelect && branchSelect.value) ? branchSelect.value : "main";
         const name = editor ? editor.dataset.filename : "";
         const content = editor ? editor.value : "";
 
-        if (!token || !repo || !name) return alert("Select a file & specify GitHub credentials.");
+        if (!token || !repo || !name) {
+            return alert("Please select an active file and ensure GitHub credentials are configured.");
+        }
+
+        const confirmMsg = `⚠️ GITHUB PUSH WARNING\n\nYou are about to overwrite/push:\n• File: ${name}\n• Repository: ${repo}\n• Branch: ${branch}\n\nDo you want to proceed?`;
+        if (!confirm(confirmMsg)) return;
 
         try {
             await pushFileToGitHub(name, content, token, repo, branch);
-            alert(`Pushed ${name} successfully!`);
+            alert(`Successfully pushed "${name}" to ${repo} (${branch})!`);
         } catch (err) {
             alert("Push failed: " + err.message);
         }
@@ -745,9 +750,14 @@ function bindUIEvents() {
 
         const token = tokenInput ? tokenInput.value.trim() : "";
         const repo = repoSelect ? repoSelect.value : "";
-        const branch = branchSelect ? branchSelect.value : "";
+        const branch = (branchSelect && branchSelect.value) ? branchSelect.value : "main";
 
-        if (!token || !repo) return alert("Configure GitHub credentials first.");
+        if (!token || !repo) {
+            return alert("Please configure your GitHub credentials and select a repository first.");
+        }
+
+        const confirmMsg = `⚠️ GITHUB PUSH ALL WARNING\n\nYou are about to push ALL workspace files to:\n• Repository: ${repo}\n• Branch: ${branch}\n\nDo you want to proceed?`;
+        if (!confirm(confirmMsg)) return;
 
         const tx = db.transaction("files", "readonly");
         const store = tx.objectStore("files");
@@ -755,7 +765,7 @@ function bindUIEvents() {
 
         req.onsuccess = async function () {
             const files = req.result;
-            if (files.length === 0) return alert("No files to push.");
+            if (files.length === 0) return alert("No local files to push.");
 
             let success = 0;
             for (const file of files) {
@@ -763,10 +773,10 @@ function bindUIEvents() {
                     await pushFileToGitHub(file.name, file.content, token, repo, branch);
                     success++;
                 } catch (err) {
-                    console.error(err);
+                    console.error(`Failed to push ${file.name}:`, err);
                 }
             }
-            alert(`Pushed ${success} of ${files.length} files!`);
+            alert(`Successfully pushed ${success} of ${files.length} files to ${repo} (${branch})!`);
         };
     });
 }
