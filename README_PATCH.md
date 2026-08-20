@@ -1,18 +1,16 @@
-# Editor patch
+# GitHub Pull/Push Patch
 
-Replace the existing `app.js`, `index.html`, and `style.css` with these three files.
+Patched GitHub integration to make repository synchronization explicit and reliable.
 
-Main fixes:
-- Corrects the stylesheet filename mismatch (`style.css`).
-- Real nested file tree with folders, drag/drop moving, folder deletion, and safe DOM rendering.
-- IndexedDB workspace stores full paths and text/binary file types.
-- ZIP import preserves nested paths and binary files.
-- Single-file download and full workspace ZIP download.
-- GitHub updates retrieve the existing file SHA before PUT, so existing files can be updated.
-- GitHub paths are URL encoded correctly and API errors are surfaced.
-- GitHub repository import preserves text/binary content.
-- Unsaved-change protection and auto-save.
-- Safer filename handling (no inline onclick strings / raw HTML filenames).
-- Mobile-friendly toolbar/tree/editor layout.
-
-Note: GitHub tokens are still stored in browser localStorage by design of the existing app. For a public production app, use a backend or OAuth flow instead of long-lived PATs in localStorage.
+## Changes
+- Repository selection now only loads branches; it no longer races an automatic import.
+- Added an explicit **Pull Repo** button.
+- Saved/default branch selection is restored safely.
+- Pull resolves selected branch -> commit -> tree SHA before reading the repository tree.
+- GitHub errors now include HTTP status and API message where available.
+- Git blobs are decoded from the documented Base64 JSON response.
+- UTF-8 text remains editable; binary files are preserved as Base64-backed workspace files.
+- Binary files pushed back to GitHub are decoded correctly instead of pushing the data-URL wrapper.
+- ZIP export now restores Base64-backed binary files to their original bytes.
+- Push checks require a selected branch and URL-encode repository file paths safely.
+- Added current GitHub REST API headers/version.

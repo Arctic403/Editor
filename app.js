@@ -276,25 +276,101 @@ function filterQuickOpenFiles(query) {
 // #endregion
 
 // #region GitHub API Integration
+function githubHeaders(token, extra = {}) {
+    return {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        ...extra
+    };
+}
+
+function githubRepoApiPath(repo) {
+    return repo.split("/").map(part => encodeURIComponent(part)).join("/");
+}
+
+async function getGitHubError(res, fallback) {
+    let detail = "";
+    try {
+        const data = await res.json();
+        detail = data && data.message ? data.message : "";
+    } catch (e) {
+        try { detail = await res.text(); } catch (e2) {}
+    }
+    return `${fallback} (HTTP ${res.status}${detail ? `: ${detail}` : ""})`;
+}
+
+function base64ToBytes(base64) {
+    const clean = (base64 || "").replace(/\s/g, "");
+    const binary = atob(clean);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+}
+
+function bytesToBase64(bytes) {
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+}
+
+function decodeGitHubBlob(base64, path = "") {
+    const bytes = base64ToBytes(base64);
+    const likelyText = EXTENSION_REGEX.test(path.toLowerCase());
+
+    try {
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        if (likelyText || isTextContent(text)) return text;
+    } catch (e) {}
+
+    return `data:application/octet-stream;base64,${bytesToBase64(bytes)}`;
+}
+
+function workspaceContentToGitHubBase64(content) {
+    if (typeof content === "string") {
+        const match = content.match(/^data:([^;,]+)?;base64,([A-Za-z0-9+/=\s]+)$/);
+        if (match) return match[2].replace(/\s/g, "");
+    }
+
+    const bytes = new TextEncoder().encode(content == null ? "" : String(content));
+    return bytesToBase64(bytes);
+}
+
+function setPullButtonState(isBusy, label) {
+    const btn = document.getElementById("pullGitHubBtn");
+    if (!btn) return;
+    btn.disabled = isBusy;
+    btn.textContent = label || (isBusy ? "⬇️ Pulling..." : "⬇️ Pull Repo");
+}
+
 function bindGitHubEvents() {
-    bindClick("connectGhBtn", function() {
+    bindClick("connectGhBtn", async function() {
         const token = document.getElementById("tokenInput").value.trim();
         if (!token) return alert("Please enter a valid GitHub PAT first.");
-        fetchGitHubRepos(token);
+        await fetchGitHubRepos(token);
     });
 
     const repoSelect = document.getElementById("repoSelect");
     if (repoSelect) {
-        repoSelect.addEventListener("change", function() {
+        repoSelect.addEventListener("change", async function() {
             const selectedRepo = this.value;
             localStorage.setItem("gh_repo", selectedRepo);
-            if (selectedRepo) {
-                const token = document.getElementById("tokenInput").value.trim();
-                fetchGitHubBranches(token, selectedRepo);
-                if (confirm(`Fetch and import files from repository "${selectedRepo}" into your local workspace?`)) {
-                    importRepoFromGitHub(token, selectedRepo);
-                }
+
+            const branchSelect = document.getElementById("branchSelect");
+            if (!selectedRepo) {
+                if (branchSelect) branchSelect.innerHTML = '<option value="">-- Choose Branch --</option>';
+                return;
             }
+
+            const token = document.getElementById("tokenInput").value.trim();
+            if (!token) return alert("Please enter your GitHub PAT first.");
+
+            const selectedOption = this.options[this.selectedIndex];
+            const defaultBranch = selectedOption ? selectedOption.dataset.defaultBranch || "" : "";
+            await fetchGitHubBranches(token, selectedRepo, defaultBranch);
         });
     }
 
@@ -304,157 +380,241 @@ function bindGitHubEvents() {
             localStorage.setItem("gh_branch", this.value);
         });
     }
+
+    bindClick("pullGitHubBtn", async function() {
+        const token = document.getElementById("tokenInput")?.value.trim() || "";
+        const repo = document.getElementById("repoSelect")?.value || "";
+        const branch = document.getElementById("branchSelect")?.value || "";
+
+        if (!token) return alert("Enter your GitHub PAT first.");
+        if (!repo) return alert("Choose a GitHub repository first.");
+        if (!branch) return alert("Choose a branch first.");
+
+        if (!confirm(`Pull "${repo}" (${branch}) into this workspace? Files with the same paths will be overwritten locally.`)) return;
+
+        setPullButtonState(true);
+        try {
+            await importRepoFromGitHub(token, repo, branch);
+        } finally {
+            setPullButtonState(false);
+        }
+    });
 }
 
 async function fetchGitHubRepos(token) {
     const repoSelect = document.getElementById("repoSelect");
+    const branchSelect = document.getElementById("branchSelect");
     if (!repoSelect) return;
     repoSelect.innerHTML = '<option value="">Loading repositories...</option>';
+    if (branchSelect) branchSelect.innerHTML = '<option value="">-- Choose Repository First --</option>';
 
     try {
         const res = await fetch("https://api.github.com/user/repos?per_page=100&sort=updated", {
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Accept": "application/vnd.github.v3+json"
-            }
+            headers: githubHeaders(token)
         });
 
-        if (!res.ok) throw new Error("Authentication failed or invalid token.");
+        if (!res.ok) throw new Error(await getGitHubError(res, "Could not load repositories"));
 
         const repos = await res.json();
         repoSelect.innerHTML = '<option value="">-- Choose Repository --</option>';
 
         const savedRepo = localStorage.getItem("gh_repo");
+        let savedDefaultBranch = "";
+
         repos.forEach(repo => {
             const opt = document.createElement("option");
             opt.value = repo.full_name;
             opt.textContent = repo.full_name;
-            if (savedRepo && repo.full_name === savedRepo) opt.selected = true;
+            opt.dataset.defaultBranch = repo.default_branch || "";
+            if (savedRepo && repo.full_name === savedRepo) {
+                opt.selected = true;
+                savedDefaultBranch = repo.default_branch || "";
+            }
             repoSelect.appendChild(opt);
         });
 
-        if (savedRepo) {
-            fetchGitHubBranches(token, savedRepo);
+        if (savedRepo && repoSelect.value === savedRepo) {
+            await fetchGitHubBranches(token, savedRepo, savedDefaultBranch);
         }
     } catch (err) {
         repoSelect.innerHTML = '<option value="">Failed to load repos</option>';
+        if (branchSelect) branchSelect.innerHTML = '<option value="">-- Choose Repository First --</option>';
         alert("GitHub API Error: " + err.message);
     }
 }
 
-async function fetchGitHubBranches(token, repo) {
+async function fetchGitHubBranches(token, repo, defaultBranch = "") {
     const branchSelect = document.getElementById("branchSelect");
-    if (!branchSelect) return;
+    if (!branchSelect) return [];
+    branchSelect.disabled = true;
     branchSelect.innerHTML = '<option value="">Loading branches...</option>';
 
     try {
-        const res = await fetch(`https://api.github.com/repos/${repo}/branches`, {
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Accept": "application/vnd.github.v3+json"
-            }
+        const repoPath = githubRepoApiPath(repo);
+        const res = await fetch(`https://api.github.com/repos/${repoPath}/branches?per_page=100`, {
+            headers: githubHeaders(token)
         });
 
-        if (!res.ok) throw new Error("Could not fetch branches.");
+        if (!res.ok) throw new Error(await getGitHubError(res, "Could not fetch branches"));
 
         const branches = await res.json();
         branchSelect.innerHTML = '';
 
+        if (!branches.length) {
+            branchSelect.innerHTML = '<option value="">No branches found</option>';
+            return [];
+        }
+
         const savedBranch = localStorage.getItem("gh_branch");
+        const branchNames = new Set(branches.map(branch => branch.name));
+        const preferredBranch = (savedBranch && branchNames.has(savedBranch))
+            ? savedBranch
+            : (defaultBranch && branchNames.has(defaultBranch) ? defaultBranch : branches[0].name);
+
         branches.forEach(branch => {
             const opt = document.createElement("option");
             opt.value = branch.name;
             opt.textContent = branch.name;
-            if ((savedBranch && branch.name === savedBranch) || (!savedBranch && (branch.name === "main" || branch.name === "master"))) {
-                opt.selected = true;
-            }
+            opt.dataset.commitSha = branch.commit?.sha || "";
+            if (branch.name === preferredBranch) opt.selected = true;
             branchSelect.appendChild(opt);
         });
+
+        localStorage.setItem("gh_branch", branchSelect.value);
+        return branches;
     } catch (err) {
         branchSelect.innerHTML = '<option value="">Failed to load branches</option>';
+        alert("GitHub Branch Error: " + err.message);
+        return [];
+    } finally {
+        branchSelect.disabled = false;
     }
 }
 
-async function importRepoFromGitHub(token, repo) {
+async function importRepoFromGitHub(token, repo, branch) {
     const branchSelect = document.getElementById("branchSelect");
-    const branch = (branchSelect && branchSelect.value) ? branchSelect.value : "main";
+    const selectedOption = branchSelect?.options[branchSelect.selectedIndex];
+    let commitSha = selectedOption?.dataset.commitSha || "";
+
     try {
-        const res = await fetch(`https://api.github.com/repos/${repo}/git/trees/${branch}?recursive=1`, {
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Accept": "application/vnd.github.v3+json"
-            }
+        const repoPath = githubRepoApiPath(repo);
+
+        // If branch metadata is unavailable/stale, resolve the selected branch again first.
+        if (!commitSha) {
+            const branchRes = await fetch(`https://api.github.com/repos/${repoPath}/branches/${encodeURIComponent(branch)}`, {
+                headers: githubHeaders(token)
+            });
+            if (!branchRes.ok) throw new Error(await getGitHubError(branchRes, `Could not resolve branch "${branch}"`));
+            const branchData = await branchRes.json();
+            commitSha = branchData.commit?.sha || "";
+        }
+
+        if (!commitSha) throw new Error(`GitHub did not return a commit for branch "${branch}".`);
+
+        // Resolve commit -> tree SHA. This avoids branch-name/path issues (for example feature/foo).
+        const commitRes = await fetch(`https://api.github.com/repos/${repoPath}/git/commits/${encodeURIComponent(commitSha)}`, {
+            headers: githubHeaders(token)
         });
+        if (!commitRes.ok) throw new Error(await getGitHubError(commitRes, "Could not resolve the branch commit"));
+        const commitData = await commitRes.json();
+        const treeSha = commitData.tree?.sha;
+        if (!treeSha) throw new Error("GitHub did not return a tree for the selected branch.");
 
-        if (!res.ok) throw new Error("Unable to fetch repository file tree.");
+        const treeRes = await fetch(`https://api.github.com/repos/${repoPath}/git/trees/${encodeURIComponent(treeSha)}?recursive=1`, {
+            headers: githubHeaders(token)
+        });
+        if (!treeRes.ok) throw new Error(await getGitHubError(treeRes, "Unable to fetch repository file tree"));
 
-        const data = await res.json();
+        const data = await treeRes.json();
+        if (!Array.isArray(data.tree)) throw new Error("GitHub returned an invalid repository tree.");
+        if (data.truncated) {
+            throw new Error("This repository tree is too large for GitHub's recursive tree response. Pull was stopped so files are not silently omitted.");
+        }
+
         const filesToFetch = data.tree.filter(item => item.type === "blob");
+        if (!filesToFetch.length) {
+            loadFiles();
+            alert(`Branch "${branch}" contains no files to import.`);
+            return;
+        }
 
         let imported = 0;
-        for (const file of filesToFetch) {
-            const fileRes = await fetch(file.url, {
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Accept": "application/vnd.github.v3.raw"
-                }
-            });
+        const failed = [];
 
-            if (fileRes.ok) {
-                const text = await fileRes.text();
-                await saveFileToDb(file.path, text);
+        for (const file of filesToFetch) {
+            setPullButtonState(true, `⬇️ Pulling ${imported + 1}/${filesToFetch.length}`);
+            try {
+                const fileRes = await fetch(file.url, {
+                    headers: githubHeaders(token)
+                });
+
+                if (!fileRes.ok) {
+                    failed.push(`${file.path} (HTTP ${fileRes.status})`);
+                    continue;
+                }
+
+                const blobData = await fileRes.json();
+                if (blobData.encoding !== "base64" || typeof blobData.content !== "string") {
+                    failed.push(`${file.path} (unsupported blob response)`);
+                    continue;
+                }
+
+                const content = decodeGitHubBlob(blobData.content, file.path);
+                await saveFileToDb(file.path, content);
                 imported++;
+            } catch (fileErr) {
+                console.error("GitHub pull failed for", file.path, fileErr);
+                failed.push(`${file.path} (${fileErr.message})`);
             }
         }
 
         loadFiles();
-        alert(`Successfully imported ${imported} file(s) from GitHub!`);
+        if (failed.length) {
+            const preview = failed.slice(0, 8).join("\n");
+            alert(`Pulled ${imported} of ${filesToFetch.length} file(s) from ${repo} (${branch}).\n\nFailed:\n${preview}${failed.length > 8 ? `\n...and ${failed.length - 8} more` : ""}`);
+        } else {
+            alert(`Successfully pulled ${imported} file(s) from ${repo} (${branch})!`);
+        }
     } catch (err) {
-        alert("Repository Import Failed: " + err.message);
+        alert("Repository Pull Failed: " + err.message);
     }
 }
 
 async function pushFileToGitHub(name, content, token, repo, branch) {
-    const url = `https://api.github.com/repos/${repo}/contents/${name}`;
-    const headers = {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "Accept": "application/vnd.github.v3+json"
-    };
+    if (!branch) throw new Error("Choose a GitHub branch first.");
+
+    const repoPath = githubRepoApiPath(repo);
+    const encodedPath = name.split("/").map(part => encodeURIComponent(part)).join("/");
+    const url = `https://api.github.com/repos/${repoPath}/contents/${encodedPath}`;
+    const headers = githubHeaders(token, { "Content-Type": "application/json" });
 
     let sha = null;
-    try {
-        const getRes = await fetch(`${url}?ref=${branch}`, { headers });
-        if (getRes.ok) {
-            const fileData = await getRes.json();
-            sha = fileData.sha;
-        }
-    } catch (e) {}
-
-    // FileReader Base64 conversion prevents Stack Overflow call limits on large files
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const base64Content = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            const result = reader.result;
-            resolve(result.split(',')[1]);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
+    const getRes = await fetch(`${url}?ref=${encodeURIComponent(branch)}`, { headers });
+    if (getRes.ok) {
+        const fileData = await getRes.json();
+        sha = fileData.sha;
+    } else if (getRes.status !== 404) {
+        throw new Error(await getGitHubError(getRes, `Could not check existing GitHub file "${name}"`));
+    }
 
     const body = {
         message: `Update ${name} via Mobile Workspace`,
-        content: base64Content,
-        branch: branch,
+        content: workspaceContentToGitHubBase64(content),
+        branch,
         ...(sha && { sha })
     };
 
-    const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
-    if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.message || res.status);
+    const putRes = await fetch(url, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(body)
+    });
+
+    if (!putRes.ok) {
+        throw new Error(await getGitHubError(putRes, `GitHub rejected the push for "${name}"`));
     }
+
+    return putRes.json();
 }
 // #endregion
 
@@ -613,7 +773,17 @@ function bindUIEvents() {
             if (files.length === 0) return alert("No files to export.");
 
             const zip = new JSZip();
-            files.forEach(file => zip.file(file.name, file.content));
+            files.forEach(file => {
+                const content = file.content;
+                if (typeof content === "string") {
+                    const binaryMatch = content.match(/^data:([^;,]+)?;base64,([A-Za-z0-9+/=\s]+)$/);
+                    if (binaryMatch) {
+                        zip.file(file.name, binaryMatch[2].replace(/\s/g, ""), { base64: true });
+                        return;
+                    }
+                }
+                zip.file(file.name, content);
+            });
 
             const blob = await zip.generateAsync({ type: "blob" });
             const link = document.createElement("a");
@@ -748,6 +918,7 @@ function bindUIEvents() {
         const branch = branchSelect ? branchSelect.value : "";
 
         if (!token || !repo) return alert("Configure GitHub credentials first.");
+        if (!branch) return alert("Choose a GitHub branch first.");
 
         const tx = db.transaction("files", "readonly");
         const store = tx.objectStore("files");
