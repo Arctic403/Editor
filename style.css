@@ -706,3 +706,12 @@ body.theme-monokai .gh-sync-card {
     background: #272822;
     border-color: #3e3d32;
 }
+
+/* v12 real folders + drag/drop */
+.file-tree.root-drop-zone { min-height: 140px; }
+.file-tree.drag-over-root { outline: 2px dashed #4da3ff; outline-offset: -4px; background: rgba(77,163,255,.06); }
+.tree-row.dragging { opacity: .45; }
+.tree-row[draggable="true"] { cursor: grab; }
+.tree-row[draggable="true"]:active { cursor: grabbing; }
+.workspace-root-row { border-bottom: 1px solid rgba(255,255,255,.08); margin-bottom: 4px; }
+.root-drop-hint { font-size: 11px; opacity: .55; margin-left: auto; padding-left: 8px; }

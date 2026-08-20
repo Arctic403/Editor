@@ -3867,6 +3867,20 @@
     function wireEditorEventsV11() {
         window.addEventListener("workspace:file-opened", e => addOpenTabV11(e.detail?.path || ""));
         window.addEventListener("workspace:file-closed", e => removeOpenTabV11(e.detail?.path || ""));
+        window.addEventListener("workspace:path-moved", e => {
+            const oldPath = e.detail?.oldPath || "";
+            const newPath = e.detail?.newPath || "";
+            const isFolder = !!e.detail?.isFolder;
+            if (!oldPath || !newPath) return;
+            openTabs = openTabs.map(path => path === oldPath || (isFolder && path.startsWith(oldPath + "/"))
+                ? (isFolder ? newPath + path.slice(oldPath.length) : newPath)
+                : path);
+            if (activeTab === oldPath || (isFolder && activeTab.startsWith(oldPath + "/"))) {
+                activeTab = isFolder ? newPath + activeTab.slice(oldPath.length) : newPath;
+            }
+            renderOpenFilesV11();
+            syncDockLabelV11();
+        });
         window.addEventListener("workspace:view-changed", e => setImmersiveModeV11(e.detail?.view));
 
         const editor = $("editor");

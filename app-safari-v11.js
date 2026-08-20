@@ -3,10 +3,10 @@ const EXTENSION_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|ht
 
 let db;
 let dbReadyPromise = null;
-const BUILD_ID = "SafariSafe-v7-GitSync-20260820";
+const BUILD_ID = "SafariSafe-v12-Folders-20260820";
 const WORKSPACE_DB_NAME = "MobileWorkspaceDB_SafariSafe_v4";
-const WORKSPACE_DB_VERSION = 1;
-const APP_BUILD = "2026-08-20-git-sync-v7";
+const WORKSPACE_DB_VERSION = 2;
+const APP_BUILD = "2026-08-20-folder-manager-v12";
 console.info("Mobile Workspace build:", APP_BUILD);
 let lastSearchIndex = 0;
 let selectedFolderPath = "";
@@ -173,6 +173,9 @@ function initDatabase() {
             const openedDb = event.target.result;
             if (!openedDb.objectStoreNames.contains("files")) {
                 openedDb.createObjectStore("files", { keyPath: "name" });
+            }
+            if (!openedDb.objectStoreNames.contains("folders")) {
+                openedDb.createObjectStore("folders", { keyPath: "path" });
             }
         };
 
@@ -1329,17 +1332,12 @@ function bindUIEvents() {
 
     bindClick("exportWorkspaceBtn", async function () {
         if (typeof JSZip === "undefined") return alert("JSZip library failed to load.");
-        const database = await getDatabase();
-
-        const tx = database.transaction("files", "readonly");
-        const store = tx.objectStore("files");
-        const req = store.getAll();
-
-        req.onsuccess = async function () {
-            const files = req.result;
-            if (files.length === 0) return alert("No files to export.");
+        try {
+            const [files, folders] = await Promise.all([getAllWorkspaceFiles(), getAllWorkspaceFolders()]);
+            if (files.length === 0 && folders.length === 0) return alert("Workspace is empty.");
 
             const zip = new JSZip();
+            folders.forEach(path => zip.folder(path));
             files.forEach(file => {
                 const content = file.content;
                 if (typeof content === "string") {
@@ -1357,8 +1355,10 @@ function bindUIEvents() {
             link.href = URL.createObjectURL(blob);
             link.download = `workspace_backup_${new Date().toISOString().slice(0, 10)}.zip`;
             link.click();
-            URL.revokeObjectURL(link.href);
-        };
+            setTimeout(() => URL.revokeObjectURL(link.href), 0);
+        } catch (err) {
+            alert("Export failed: " + (err.message || err));
+        }
     });
 
     bindClick("findNextBtn", function () {
@@ -1445,13 +1445,33 @@ function bindUIEvents() {
 
     bindClick("newFileBtn", function () {
         const defaultPath = selectedFolderPath ? `${selectedFolderPath}/` : "";
-        const name = prompt("Enter file path:", defaultPath);
-        if (!name || name.trim() === "" || name.endsWith("/")) return;
+        const input = prompt("Enter file path:", defaultPath);
+        const name = normalizeWorkspacePath(input || "");
+        if (!name) return;
+        const parent = name.includes("/") ? name.slice(0, name.lastIndexOf("/")) : "";
 
-        saveFileToDb(name.trim(), "").then(() => {
-            loadFiles();
-            openFile(name.trim());
-        });
+        (async () => {
+            if (parent) await ensureFolderPath(parent);
+            await saveFileToDb(name, "");
+            await loadFiles();
+            await openFile(name);
+        })().catch(err => alert("Could not create file: " + (err.message || err)));
+    });
+
+    bindClick("newFolderBtn", async function () {
+        const defaultPath = selectedFolderPath ? `${selectedFolderPath}/New Folder` : "New Folder";
+        const input = prompt("Enter folder path:", defaultPath);
+        if (!input) return;
+        const path = normalizeWorkspacePath(input);
+        if (!path) return alert("Enter a valid folder name.");
+        try {
+            await ensureFolderPath(path);
+            selectedFolderPath = path;
+            expandFolderPath(path);
+            await loadFiles();
+        } catch (err) {
+            alert("Could not create folder: " + (err.message || err));
+        }
     });
 
     bindClick("pushGitHubBtn", async function () {
@@ -1721,40 +1741,118 @@ async function openSecondaryPaneFile(name) {
 // #region Universal File & Directory Rendering
 async function loadFiles() {
     const database = await getDatabase();
-    const tx = database.transaction("files", "readonly");
-    const store = tx.objectStore("files");
-    const req = store.getAll();
+    const files = await new Promise((resolve, reject) => {
+        const tx = database.transaction("files", "readonly");
+        const req = tx.objectStore("files").getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error || new Error("Could not read workspace files."));
+    });
+    const folders = database.objectStoreNames.contains("folders")
+        ? await new Promise((resolve, reject) => {
+            const tx = database.transaction("folders", "readonly");
+            const req = tx.objectStore("folders").getAll();
+            req.onsuccess = () => resolve((req.result || []).map(item => item.path).filter(Boolean));
+            req.onerror = () => reject(req.error || new Error("Could not read workspace folders."));
+        })
+        : [];
 
-    req.onsuccess = function () {
-        const files = req.result;
-        const itemCount = document.getElementById("itemCount");
-        if (itemCount) itemCount.textContent = `${files.length} items`;
-        
-        const treeRoot = buildFileTreeStructure(files);
-        const container = document.getElementById("fileTree");
-        if (container) {
-            container.innerHTML = "";
-            renderTree(treeRoot, container, "");
-        }
-        if (!gitSyncBusy) scheduleGitSyncStatusUpdate();
-    };
+    const itemCount = document.getElementById("itemCount");
+    if (itemCount) itemCount.textContent = `${files.length} files · ${folders.length} folders`;
+
+    const treeRoot = buildFileTreeStructure(files, folders);
+    const container = document.getElementById("fileTree");
+    if (container) {
+        container.innerHTML = "";
+        container.classList.add("root-drop-zone");
+        container.ondragover = (e) => {
+            if (e.target === container) {
+                e.preventDefault();
+                container.classList.add("drag-over-root");
+            }
+        };
+        container.ondragleave = (e) => {
+            if (e.target === container) container.classList.remove("drag-over-root");
+        };
+        container.ondrop = async (e) => {
+            if (e.target !== container) return;
+            e.preventDefault();
+            container.classList.remove("drag-over-root");
+            const payload = readDragPayload(e);
+            if (payload.path) await moveWorkspaceItem(payload.path, "", payload.type);
+        };
+
+        const rootRow = document.createElement("div");
+        rootRow.className = "tree-row workspace-root-row" + (!selectedFolderPath ? " selected-folder" : "");
+        rootRow.innerHTML = '<span class="tree-label"><span class="folder-icon">🗂️</span><strong>Workspace Root</strong></span><span class="root-drop-hint">drop here to move out</span>';
+        rootRow.addEventListener("click", () => { selectedFolderPath = ""; loadFiles(); });
+        rootRow.ondragover = (e) => { e.preventDefault(); e.stopPropagation(); rootRow.classList.add("drag-over"); };
+        rootRow.ondragleave = () => rootRow.classList.remove("drag-over");
+        rootRow.ondrop = async (e) => {
+            e.preventDefault(); e.stopPropagation(); rootRow.classList.remove("drag-over");
+            const payload = readDragPayload(e);
+            if (payload.path) await moveWorkspaceItem(payload.path, "", payload.type);
+        };
+        container.appendChild(rootRow);
+        renderTree(treeRoot, container, "");
+    }
+    if (!gitSyncBusy) scheduleGitSyncStatusUpdate();
 }
 
-function buildFileTreeStructure(files) {
+function normalizeWorkspacePath(path) {
+    if (typeof path !== "string") return "";
+    const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+    const clean = [];
+    for (const part of parts) {
+        if (part === ".") continue;
+        if (part === "..") { clean.pop(); continue; }
+        if (part.includes("\0")) continue;
+        clean.push(part);
+    }
+    return clean.join("/");
+}
+
+function buildFileTreeStructure(files, folders = []) {
     const root = {};
+    const ensureFolderNode = (folderPath) => {
+        const parts = normalizeWorkspacePath(folderPath).split('/').filter(Boolean);
+        let current = root;
+        parts.forEach(part => {
+            if (!current[part] || current[part]._isFile) current[part] = { _isFile: false, _children: {} };
+            current = current[part]._children;
+        });
+    };
+
+    folders.forEach(ensureFolderNode);
     files.forEach(file => {
-        const parts = file.name.split('/');
+        const normalized = normalizeWorkspacePath(file.name);
+        const parts = normalized.split('/').filter(Boolean);
         let current = root;
         parts.forEach((part, index) => {
             if (index === parts.length - 1) {
-                current[part] = { _isFile: true, fullPath: file.name };
+                current[part] = { _isFile: true, fullPath: normalized };
             } else {
-                if (!current[part]) current[part] = { _isFile: false, _children: {} };
+                if (!current[part] || current[part]._isFile) current[part] = { _isFile: false, _children: {} };
                 current = current[part]._children;
             }
         });
     });
     return root;
+}
+
+function setDragPayload(e, path, type) {
+    if (!e.dataTransfer) return;
+    const payload = JSON.stringify({ path, type });
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/x-workspace-item", payload);
+    e.dataTransfer.setData("text/plain", path);
+}
+
+function readDragPayload(e) {
+    try {
+        const raw = e.dataTransfer && e.dataTransfer.getData("application/x-workspace-item");
+        if (raw) return JSON.parse(raw);
+    } catch (_) {}
+    return { path: e.dataTransfer ? e.dataTransfer.getData("text/plain") : "", type: "file" };
 }
 
 function renderTree(node, container, currentFolderPath) {
@@ -1812,15 +1910,27 @@ function renderTree(node, container, currentFolderPath) {
                 deleteFile(item.fullPath);
             });
 
+            const move = document.createElement("span");
+            move.className = "delete-icon";
+            move.title = "Move File";
+            move.textContent = "↪";
+            move.addEventListener("click", async (e) => {
+                e.preventDefault(); e.stopPropagation();
+                await promptMoveWorkspaceItem(item.fullPath, "file");
+            });
+
             actions.appendChild(split);
+            actions.appendChild(move);
             actions.appendChild(del);
             row.appendChild(label);
             row.appendChild(actions);
             treeNode.appendChild(row);
 
             row.ondragstart = (e) => {
-                e.dataTransfer.setData("text/plain", item.fullPath);
+                row.classList.add("dragging");
+                setDragPayload(e, item.fullPath, "file");
             };
+            row.ondragend = () => row.classList.remove("dragging");
         } else {
             const folderPath = currentFolderPath ? `${currentFolderPath}/${key}` : key;
             const childrenContainer = document.createElement("div");
@@ -1846,6 +1956,28 @@ function renderTree(node, container, currentFolderPath) {
             label.appendChild(folderIcon);
             label.appendChild(folderName);
 
+            row.draggable = true;
+            row.ondragstart = (e) => {
+                e.stopPropagation();
+                row.classList.add("dragging");
+                setDragPayload(e, folderPath, "folder");
+            };
+            row.ondragend = () => row.classList.remove("dragging");
+
+            const actions = document.createElement("span");
+            actions.style.display = "flex";
+            actions.style.gap = "4px";
+            actions.style.alignItems = "center";
+
+            const move = document.createElement("span");
+            move.className = "delete-icon";
+            move.title = "Move Folder";
+            move.textContent = "↪";
+            move.addEventListener("click", async (e) => {
+                e.preventDefault(); e.stopPropagation();
+                await promptMoveWorkspaceItem(folderPath, "folder");
+            });
+
             const del = document.createElement("span");
             del.className = "delete-icon";
             del.title = "Delete Folder";
@@ -1856,8 +1988,9 @@ function renderTree(node, container, currentFolderPath) {
                 deleteFolder(folderPath);
             });
 
+            actions.append(move, del);
             row.appendChild(label);
-            row.appendChild(del);
+            row.appendChild(actions);
             treeNode.appendChild(row);
 
             const toggleFolder = (e) => {
@@ -1907,9 +2040,9 @@ function renderTree(node, container, currentFolderPath) {
                 e.preventDefault();
                 e.stopPropagation();
                 row.classList.remove('drag-over');
-                const sourcePath = e.dataTransfer.getData("text/plain");
-                if (sourcePath) {
-                    await moveFileToFolder(sourcePath, folderPath);
+                const payload = readDragPayload(e);
+                if (payload.path) {
+                    await moveWorkspaceItem(payload.path, folderPath, payload.type);
                 }
             };
 
@@ -1946,34 +2079,158 @@ function expandFolderPath(path) {
     }
 }
 
-async function moveFileToFolder(filePath, targetFolderPath) {
-    const fileName = filePath.split('/').pop();
-    const newPath = `${targetFolderPath}/${fileName}`;
-    if (filePath === newPath) return;
-
+async function getAllWorkspaceFiles() {
     const database = await getDatabase();
-    const tx = database.transaction("files", "readwrite");
-    const store = tx.objectStore("files");
-    const req = store.get(filePath);
+    return await new Promise((resolve, reject) => {
+        const tx = database.transaction("files", "readonly");
+        const req = tx.objectStore("files").getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error || new Error("Could not read workspace files."));
+    });
+}
 
-    req.onsuccess = function() {
-        if (req.result) {
-            const content = req.result.content;
-            store.delete(filePath);
-            store.put({ name: newPath, content });
+async function getAllWorkspaceFolders() {
+    const database = await getDatabase();
+    if (!database.objectStoreNames.contains("folders")) return [];
+    return await new Promise((resolve, reject) => {
+        const tx = database.transaction("folders", "readonly");
+        const req = tx.objectStore("folders").getAll();
+        req.onsuccess = () => resolve((req.result || []).map(x => x.path).filter(Boolean));
+        req.onerror = () => reject(req.error || new Error("Could not read workspace folders."));
+    });
+}
+
+async function saveFolderToDb(path) {
+    const normalized = normalizeWorkspacePath(path);
+    if (!normalized) return;
+    const database = await getDatabase();
+    if (!database.objectStoreNames.contains("folders")) throw new Error("Folder storage is unavailable.");
+    return await new Promise((resolve, reject) => {
+        const tx = database.transaction("folders", "readwrite");
+        tx.objectStore("folders").put({ path: normalized });
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error || new Error(`Could not save folder "${normalized}".`));
+        tx.onabort = () => reject(tx.error || new Error(`Saving folder "${normalized}" was aborted.`));
+    });
+}
+
+async function ensureFolderPath(path) {
+    const normalized = normalizeWorkspacePath(path);
+    if (!normalized) return;
+    const parts = normalized.split("/");
+    let current = "";
+    for (const part of parts) {
+        current = current ? `${current}/${part}` : part;
+        await saveFolderToDb(current);
+    }
+}
+
+async function promptMoveWorkspaceItem(sourcePath, type) {
+    const currentParent = sourcePath.includes("/") ? sourcePath.slice(0, sourcePath.lastIndexOf("/")) : "";
+    const target = prompt(`Move ${type} into folder (leave blank for workspace root):`, currentParent);
+    if (target === null) return;
+    await moveWorkspaceItem(sourcePath, normalizeWorkspacePath(target), type);
+}
+
+async function moveWorkspaceItem(sourcePath, targetFolderPath, type = "file") {
+    sourcePath = normalizeWorkspacePath(sourcePath);
+    targetFolderPath = normalizeWorkspacePath(targetFolderPath || "");
+    if (!sourcePath) return;
+
+    const baseName = sourcePath.split('/').pop();
+    const newPath = targetFolderPath ? `${targetFolderPath}/${baseName}` : baseName;
+    if (sourcePath === newPath) return;
+    if (type === "folder" && (targetFolderPath === sourcePath || targetFolderPath.startsWith(sourcePath + "/"))) {
+        return alert("A folder cannot be moved inside itself or one of its own subfolders.");
+    }
+
+    const [files, folders] = await Promise.all([getAllWorkspaceFiles(), getAllWorkspaceFolders()]);
+    const fileNames = new Set(files.map(f => f.name));
+    const folderNames = new Set(folders);
+
+    if (type === "file") {
+        const item = files.find(f => f.name === sourcePath);
+        if (!item) return alert("That file no longer exists.");
+        if ((fileNames.has(newPath) || folderNames.has(newPath)) && !confirm(`"${newPath}" already exists. Replace it?`)) return;
+        if (targetFolderPath) await ensureFolderPath(targetFolderPath);
+
+        const database = await getDatabase();
+        await new Promise((resolve, reject) => {
+            const tx = database.transaction("files", "readwrite");
+            const store = tx.objectStore("files");
+            store.delete(sourcePath);
+            store.put({ name: newPath, content: item.content });
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error || new Error("Could not move file."));
+            tx.onabort = () => reject(tx.error || new Error("Move was aborted."));
+        });
+        workspaceHashCache.delete(sourcePath);
+        workspaceHashCache.delete(newPath);
+        updateOpenPathAfterMove(sourcePath, newPath, false);
+    } else {
+        const sourceExists = folderNames.has(sourcePath) || files.some(f => f.name.startsWith(sourcePath + "/"));
+        if (!sourceExists) return alert("That folder no longer exists.");
+        if ((folderNames.has(newPath) || fileNames.has(newPath)) && !confirm(`"${newPath}" already exists. Merge into it?`)) return;
+        if (targetFolderPath) await ensureFolderPath(targetFolderPath);
+
+        const movedFiles = files.filter(f => f.name.startsWith(sourcePath + "/"));
+        const movedFolders = folders.filter(f => f === sourcePath || f.startsWith(sourcePath + "/"));
+        const database = await getDatabase();
+        const stores = database.objectStoreNames.contains("folders") ? ["files", "folders"] : ["files"];
+        await new Promise((resolve, reject) => {
+            const tx = database.transaction(stores, "readwrite");
+            const fileStore = tx.objectStore("files");
+            const folderStore = stores.includes("folders") ? tx.objectStore("folders") : null;
+            movedFiles.forEach(item => {
+                const suffix = item.name.slice(sourcePath.length);
+                fileStore.delete(item.name);
+                fileStore.put({ name: newPath + suffix, content: item.content });
+            });
+            if (folderStore) {
+                movedFolders.forEach(path => {
+                    const suffix = path.slice(sourcePath.length);
+                    folderStore.delete(path);
+                    folderStore.put({ path: newPath + suffix });
+                });
+                folderStore.put({ path: newPath });
+            }
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error || new Error("Could not move folder."));
+            tx.onabort = () => reject(tx.error || new Error("Folder move was aborted."));
+        });
+        movedFiles.forEach(f => { workspaceHashCache.delete(f.name); workspaceHashCache.delete(newPath + f.name.slice(sourcePath.length)); });
+        updateOpenPathAfterMove(sourcePath, newPath, true);
+        if (selectedFolderPath === sourcePath || selectedFolderPath.startsWith(sourcePath + "/")) {
+            selectedFolderPath = newPath + selectedFolderPath.slice(sourcePath.length);
         }
-    };
+        for (const expandedPath of Array.from(expandedFolderPaths)) {
+            if (expandedPath === sourcePath || expandedPath.startsWith(sourcePath + "/")) {
+                expandedFolderPaths.delete(expandedPath);
+                expandedFolderPaths.add(newPath + expandedPath.slice(sourcePath.length));
+            }
+        }
+    }
 
-    tx.oncomplete = () => {
-        const editor = document.getElementById("editor");
-        if (editor && editor.dataset.filename === filePath) {
-            editor.dataset.filename = newPath;
+    expandFolderPath(targetFolderPath);
+    await loadFiles();
+}
+
+function updateOpenPathAfterMove(oldPath, newPath, isFolder) {
+    const editor = document.getElementById("editor");
+    if (editor && editor.dataset.filename) {
+        const current = editor.dataset.filename;
+        const matches = current === oldPath || (isFolder && current.startsWith(oldPath + "/"));
+        if (matches) {
+            const updated = isFolder ? newPath + current.slice(oldPath.length) : newPath;
+            editor.dataset.filename = updated;
             const label = document.getElementById("activeFileLabel");
-            if (label) label.textContent = "Editing: " + newPath;
-            updateBreadcrumbs(newPath);
+            if (label) label.textContent = updated;
+            updateBreadcrumbs(updated);
         }
-        loadFiles();
-    };
+    }
+    try {
+        window.dispatchEvent(new CustomEvent("workspace:path-moved", { detail: { oldPath, newPath, isFolder } }));
+    } catch (_) {}
 }
 // #endregion
 
@@ -1997,25 +2254,53 @@ if (uploadInputEl) {
     };
 }
 
-async function importRegularFile(file) {
-    const destPath = selectedFolderPath ? `${selectedFolderPath}/${file.name}` : file.name;
+const folderUploadInputEl = document.getElementById("folderUploadInput");
+if (folderUploadInputEl) {
+    folderUploadInputEl.onchange = async function (event) {
+        const files = Array.from(event.target.files || []);
+        if (!files.length) return;
+        try {
+            for (const file of files) {
+                const relative = normalizeWorkspacePath(file.webkitRelativePath || file.name);
+                if (!relative) continue;
+                const targetPath = normalizeWorkspacePath(selectedFolderPath ? `${selectedFolderPath}/${relative}` : relative);
+                const parent = targetPath.includes("/") ? targetPath.slice(0, targetPath.lastIndexOf("/")) : "";
+                if (parent) await ensureFolderPath(parent);
+                await importRegularFileAtPath(file, targetPath);
+            }
+            await loadFiles();
+        } catch (err) {
+            alert("Folder import failed: " + (err.message || err));
+        } finally {
+            event.target.value = "";
+        }
+    };
+}
+
+async function importRegularFileAtPath(file, destPath) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = function () {
-            let content = reader.result;
+            const content = reader.result;
             if (typeof content !== "string" || !isTextContent(content)) {
                 const base64Reader = new FileReader();
-                base64Reader.onload = function () {
-                    saveFileToDb(destPath, base64Reader.result).then(resolve);
-                };
+                base64Reader.onload = function () { saveFileToDb(destPath, base64Reader.result).then(resolve, reject); };
+                base64Reader.onerror = reject;
                 base64Reader.readAsDataURL(file);
             } else {
-                saveFileToDb(destPath, content).then(resolve);
+                saveFileToDb(destPath, content).then(resolve, reject);
             }
         };
         reader.onerror = reject;
         reader.readAsText(file);
     });
+}
+
+async function importRegularFile(file) {
+    const destPath = normalizeWorkspacePath(selectedFolderPath ? `${selectedFolderPath}/${file.name}` : file.name);
+    const parent = destPath.includes("/") ? destPath.slice(0, destPath.lastIndexOf("/")) : "";
+    if (parent) await ensureFolderPath(parent);
+    return importRegularFileAtPath(file, destPath);
 }
 
 async function saveFileToDb(name, content) {
@@ -2060,7 +2345,13 @@ async function unpackZip(zipFile) {
 
         for (const path in zip.files) {
             const entry = zip.files[path];
-            if (entry.dir) continue;
+            const relativeEntryPath = normalizeWorkspacePath(entry.name);
+            if (!relativeEntryPath || relativeEntryPath.startsWith("__MACOSX/")) continue;
+            if (entry.dir) {
+                const folderPath = normalizeWorkspacePath(selectedFolderPath ? `${selectedFolderPath}/${relativeEntryPath}` : relativeEntryPath);
+                if (folderPath) await ensureFolderPath(folderPath);
+                continue;
+            }
 
             const normalizedName = entry.name.toLowerCase();
             const isText = EXTENSION_REGEX.test(normalizedName);
@@ -2078,7 +2369,11 @@ async function unpackZip(zipFile) {
                 }
             }
 
-            const targetPath = selectedFolderPath ? `${selectedFolderPath}/${entry.name}` : entry.name;
+            const relativePath = normalizeWorkspacePath(entry.name);
+            if (!relativePath || relativePath.startsWith("__MACOSX/")) continue;
+            const targetPath = normalizeWorkspacePath(selectedFolderPath ? `${selectedFolderPath}/${relativePath}` : relativePath);
+            const parent = targetPath.includes("/") ? targetPath.slice(0, targetPath.lastIndexOf("/")) : "";
+            if (parent) await ensureFolderPath(parent);
             extractedFiles.push({ name: targetPath, content });
         }
 
@@ -2171,40 +2466,30 @@ async function deleteFile(name) {
 
 async function deleteFolder(folderPath) {
     if (!confirm(`Delete folder "${folderPath}" and all contained files?`)) return;
-
+    const [files, folders] = await Promise.all([getAllWorkspaceFiles(), getAllWorkspaceFolders()]);
+    const prefix = folderPath + "/";
     const database = await getDatabase();
-    const tx = database.transaction("files", "readwrite");
-    const store = tx.objectStore("files");
-    const req = store.getAllKeys();
+    const stores = database.objectStoreNames.contains("folders") ? ["files", "folders"] : ["files"];
 
-    req.onsuccess = function () {
-        const keys = req.result;
-        const prefix = folderPath + "/";
-        const editor = document.getElementById("editor");
+    await new Promise((resolve, reject) => {
+        const tx = database.transaction(stores, "readwrite");
+        const fileStore = tx.objectStore("files");
+        files.filter(f => f.name.startsWith(prefix)).forEach(f => fileStore.delete(f.name));
+        if (stores.includes("folders")) {
+            const folderStore = tx.objectStore("folders");
+            folders.filter(f => f === folderPath || f.startsWith(prefix)).forEach(f => folderStore.delete(f));
+        }
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error || new Error("Could not delete folder."));
+        tx.onabort = () => reject(tx.error || new Error("Folder delete was aborted."));
+    });
 
-        keys.forEach(key => {
-            if (key === folderPath || key.startsWith(prefix)) {
-                store.delete(key);
-                if (editor && editor.dataset.filename === key) {
-                    closeCurrentFile();
-                }
-            }
-        });
-
-        tx.oncomplete = () => {
-            if (selectedFolderPath === folderPath || selectedFolderPath.startsWith(prefix)) selectedFolderPath = "";
-            for (const expandedPath of Array.from(expandedFolderPaths)) {
-                if (expandedPath === folderPath || expandedPath.startsWith(prefix)) {
-                    expandedFolderPaths.delete(expandedPath);
-                }
-            }
-            updateLineNumbers();
-            updateHighlights();
-            renderCodeBlockNav("");
-            updateBreadcrumbs("");
-            updateDirtyIndicator(false);
-            loadFiles();
-        };
-    };
+    const editor = document.getElementById("editor");
+    if (editor && editor.dataset.filename && editor.dataset.filename.startsWith(prefix)) closeCurrentFile();
+    if (selectedFolderPath === folderPath || selectedFolderPath.startsWith(prefix)) selectedFolderPath = "";
+    for (const expandedPath of Array.from(expandedFolderPaths)) {
+        if (expandedPath === folderPath || expandedPath.startsWith(prefix)) expandedFolderPaths.delete(expandedPath);
+    }
+    await loadFiles();
 }
 // #endregion

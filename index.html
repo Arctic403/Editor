@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Mobile Workspace Editor</title>
-    <link rel="stylesheet" href="style.css?v=20260820-immersive-v11">
+    <link rel="stylesheet" href="style.css?v=20260820-folder-v12">
     <!-- JSZip for Exporting Workspace -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <!-- Prism.js for Syntax Highlighting -->
@@ -12,7 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
 </head>
-<body data-build="SafariSafe-v11-Immersive-20260820">
+<body data-build="SafariSafe-v12-Folders-20260820">
     <div class="app-container" id="appContainer">
         <!-- App Header & Navigation -->
         <header class="app-header" id="appHeader">
@@ -66,9 +66,14 @@
             <!-- Explorer Actions Toolbar -->
             <div class="toolbar" id="appToolbar">
                 <button class="btn btn-success" id="newFileBtn">+ New File</button>
+                <button class="btn btn-secondary" id="newFolderBtn">+ New Folder</button>
                 <label class="btn btn-secondary">
                     📥 Upload / Import
                     <input type="file" id="uploadInput" multiple style="display: none;">
+                </label>
+                <label class="btn btn-secondary">
+                    📂 Import Folder
+                    <input type="file" id="folderUploadInput" webkitdirectory directory multiple style="display: none;">
                 </label>
                 <button class="btn btn-warning" id="exportWorkspaceBtn">📦 Export ZIP</button>
                 <button class="btn btn-secondary" id="pushAllGitHubBtn" disabled>☁️ Push Changes</button>
@@ -165,7 +170,7 @@
         </div>
     </div>
 
-    <script src="app-safari-v11.js?v=11-immersive-core"></script>
-    <script src="ide-v11.js?v=11-immersive-shell"></script>
+    <script src="app-safari-v11.js?v=12-folder-core"></script>
+    <script src="ide-v11.js?v=12-folder-shell"></script>
 </body>
 </html>
