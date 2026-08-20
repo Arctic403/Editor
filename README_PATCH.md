@@ -31,3 +31,10 @@ Patched GitHub integration to make repository synchronization explicit and relia
 - If the `files` object store is missing, it upgrades from the database's actual current version.
 - This fixes Safari `VersionError: An attempt was made to open a database using a lower version than the existing version`.
 - JavaScript asset renamed to `app-safari-v3.js` to force a fresh Safari load.
+
+
+## Safari IndexedDB hard reset (v4)
+- Uses a brand-new IndexedDB database name: `MobileWorkspaceDB_SafariSafe_v4`.
+- This avoids all schema-version conflicts with legacy `LocalWorkspaceDB` data on Safari.
+- Storage errors now include build ID `SafariSafe-v4-20260820-0446` so cached deployments are obvious.
+- The old database is not deleted or modified.
