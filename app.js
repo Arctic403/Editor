@@ -1,9 +1,12 @@
+// #region Global Constants & Variables
 // Universal Text File Identifier (Matches over 50+ common code/data extensions)
 const EXTENSION_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|html|htm|md|xml|cfg|ini|lua|py|cpp|c|h|hpp|cs|java|go|rs|php|rb|sh|bat|ps1|sql|yaml|yml|toml|env|gitignore|properties|log|swift|kt|kts|dart|r|m|mm|vue|svelte|astro|graphql|gql|prisma|diff|patch|dockerfile|makefile)$/i;
 
 let db;
 let lastSearchIndex = 0;
+// #endregion
 
+// #region Helper Utilities
 // Safe Event Listener Binding (iOS Safari + Chrome Mobile Compatible)
 function bindClick(id, handler) {
     const element = document.getElementById(id);
@@ -43,9 +46,21 @@ function decodeBase64Text(base64Str) {
     return base64Str;
 }
 
-// ---------------------------
-// Initialize App
-// ---------------------------
+function escapeHtml(text) {
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+// #endregion
+
+// #region Application Initialization
 document.addEventListener("DOMContentLoaded", function () {
     initDatabase();
     bindUIEvents();
@@ -79,10 +94,9 @@ function restoreSettings() {
 }
 
 document.getElementById("tokenInput").addEventListener("input", e => localStorage.setItem("gh_token", e.target.value.trim()));
+// #endregion
 
-// ---------------------------
-// Dynamic GitHub Repos & Branches Setup
-// ---------------------------
+// #region GitHub API Integration
 function bindGitHubEvents() {
     bindClick("connectGhBtn", function() {
         const token = document.getElementById("tokenInput").value.trim();
@@ -218,19 +232,104 @@ async function importRepoFromGitHub(token, repo) {
     }
 }
 
-// ---------------------------
-// UI Control Event Bindings
-// ---------------------------
+async function pushFileToGitHub(name, content, token, repo, branch) {
+    const url = `https://api.github.com/repos/${repo}/contents/${name}`;
+    const headers = {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "Accept": "application/vnd.github.v3+json"
+    };
+
+    let sha = null;
+    try {
+        const getRes = await fetch(`${url}?ref=${branch}`, { headers });
+        if (getRes.ok) {
+            const fileData = await getRes.json();
+            sha = fileData.sha;
+        }
+    } catch (e) {}
+
+    const bytes = new TextEncoder().encode(content);
+    const base64Content = btoa(String.fromCharCode(...bytes));
+
+    const body = {
+        message: `Update ${name} via Mobile Editor`,
+        content: base64Content,
+        branch: branch,
+        ...(sha && { sha })
+    };
+
+    const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
+    if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.message || res.status);
+    }
+}
+// #endregion
+
+// #region Code Block Navigation Logic
+function parseCodeBlocks(content) {
+    const lines = content.split('\n');
+    const blocks = [];
+    let currentBlock = null;
+
+    lines.forEach((line, index) => {
+        const regionStart = line.match(/\/\/\s*#(?:region|block)\s+(.*)/i);
+        const regionEnd = line.match(/\/\/\s*#end(?:region|block)/i);
+
+        if (regionStart) {
+            currentBlock = { name: regionStart[1].trim(), startLine: index + 1 };
+        } else if (regionEnd && currentBlock) {
+            currentBlock.endLine = index + 1;
+            blocks.push(currentBlock);
+            currentBlock = null;
+        }
+    });
+
+    return blocks;
+}
+
+function renderCodeBlockNav(content) {
+    const navContainer = document.getElementById("blockNav");
+    if (!navContainer) return;
+
+    const blocks = parseCodeBlocks(content);
+    navContainer.innerHTML = "";
+
+    if (blocks.length === 0) {
+        navContainer.innerHTML = `<span class="no-blocks">No defined #region blocks</span>`;
+        return;
+    }
+
+    blocks.forEach(block => {
+        const item = document.createElement("div");
+        item.className = "block-nav-item";
+        item.innerHTML = `🧩 <strong>${block.name}</strong> <small>(L${block.startLine}-${block.endLine})</small>`;
+        item.onclick = () => jumpToLine(block.startLine);
+        navContainer.appendChild(item);
+    });
+}
+
+function jumpToLine(lineNumber) {
+    const editor = document.getElementById("editor");
+    const lineHeight = 20; // Matches editor CSS line-height
+    editor.scrollTop = (lineNumber - 1) * lineHeight;
+    editor.focus();
+}
+// #endregion
+
+// #region UI Event Handlers & Editor Controls
 function bindUIEvents() {
     const editor = document.getElementById("editor");
     const highlightLayer = document.getElementById("highlightLayer");
     const lineNumbers = document.getElementById("lineNumbers");
     const searchInput = document.getElementById("searchInput");
 
-    // Sync input changes across Line Numbers & Background Highlights + Auto-Save
+    // Sync input changes across Line Numbers, Background Highlights, Block Nav & Auto-Save
     editor.addEventListener("input", function () {
         updateLineNumbers();
         updateHighlights();
+        renderCodeBlockNav(this.value);
         autoSaveCurrentFile();
     });
 
@@ -245,6 +344,7 @@ function bindUIEvents() {
             this.selectionStart = this.selectionEnd = start + 4;
             updateLineNumbers();
             updateHighlights();
+            renderCodeBlockNav(this.value);
         }
 
         if ((e.ctrlKey || e.metaKey) && e.key === "s") {
@@ -273,6 +373,7 @@ function bindUIEvents() {
         document.getElementById("activeFileLabel").textContent = "No file selected";
         updateLineNumbers();
         updateHighlights();
+        renderCodeBlockNav("");
     });
 
     bindClick("searchToggleBtn", function () {
@@ -337,6 +438,7 @@ function bindUIEvents() {
             editor.value = text.replace(searchVal, replaceVal);
             updateLineNumbers();
             updateHighlights();
+            renderCodeBlockNav(editor.value);
             autoSaveCurrentFile();
         }
     });
@@ -359,6 +461,7 @@ function bindUIEvents() {
             editor.value = editor.value.replace(regex, replaceVal);
             updateLineNumbers();
             updateHighlights();
+            renderCodeBlockNav(editor.value);
             autoSaveCurrentFile();
             alert(`Replaced ${matches} instance(s).`);
         }
@@ -445,19 +548,6 @@ function autoSaveCurrentFile() {
     }, 1000);
 }
 
-function escapeHtml(text) {
-    return text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-function escapeRegExp(string) {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function updateLineNumbers() {
     const editor = document.getElementById("editor");
     const lineNumbers = document.getElementById("lineNumbers");
@@ -498,10 +588,9 @@ function updateHighlights() {
 
     highlightLayer.innerHTML = escapedText.replace(regex, `<mark class="search-highlight">$1</mark>`);
 }
+// #endregion
 
-// ---------------------------
-// Universal File & Directory Rendering
-// ---------------------------
+// #region Universal File & Directory Rendering
 function loadFiles() {
     if (!db) return;
     const tx = db.transaction("files", "readonly");
@@ -587,10 +676,9 @@ function toggleFolder(labelElement) {
         labelElement.innerHTML = labelElement.innerHTML.replace(isHidden ? "📁" : "📂", isHidden ? "📂" : "📁");
     }
 }
+// #endregion
 
-// ---------------------------
-// Multi-Format File Import Logic
-// ---------------------------
+// #region Multi-Format File Import Logic
 document.getElementById("uploadInput").onchange = async function (event) {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -691,10 +779,9 @@ async function unpackZip(zipFile) {
         alert("ZIP unpack error: " + err.message);
     }
 }
+// #endregion
 
-// ---------------------------
-// File Workspace Operations
-// ---------------------------
+// #region File Workspace Operations
 function openFile(name) {
     const tx = db.transaction("files", "readonly");
     const store = tx.objectStore("files");
@@ -714,6 +801,7 @@ function openFile(name) {
         lastSearchIndex = 0;
         updateLineNumbers();
         updateHighlights();
+        renderCodeBlockNav(rawContent);
     };
 }
 
@@ -730,6 +818,7 @@ function deleteFile(name) {
             document.getElementById("activeFileLabel").textContent = "No file selected";
             updateLineNumbers();
             updateHighlights();
+            renderCodeBlockNav("");
         }
         loadFiles();
     };
@@ -761,44 +850,9 @@ function deleteFolder(folderPath) {
         tx.oncomplete = () => {
             updateLineNumbers();
             updateHighlights();
+            renderCodeBlockNav("");
             loadFiles();
         };
     };
 }
-
-// ---------------------------
-// GitHub Push Integration
-// ---------------------------
-async function pushFileToGitHub(name, content, token, repo, branch) {
-    const url = `https://api.github.com/repos/${repo}/contents/${name}`;
-    const headers = {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "Accept": "application/vnd.github.v3+json"
-    };
-
-    let sha = null;
-    try {
-        const getRes = await fetch(`${url}?ref=${branch}`, { headers });
-        if (getRes.ok) {
-            const fileData = await getRes.json();
-            sha = fileData.sha;
-        }
-    } catch (e) {}
-
-    const bytes = new TextEncoder().encode(content);
-    const base64Content = btoa(String.fromCharCode(...bytes));
-
-    const body = {
-        message: `Update ${name} via Mobile Editor`,
-        content: base64Content,
-        branch: branch,
-        ...(sha && { sha })
-    };
-
-    const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
-    if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.message || res.status);
-    }
-}
+// #endregion
