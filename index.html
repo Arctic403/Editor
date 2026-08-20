@@ -72,10 +72,13 @@
             <button id="replaceAllBtn" class="btn btn-sm btn-secondary" type="button">Replace All</button>
         </div>
 
-        <!-- Line Numbers + Editor Container -->
-        <div class="editor-workspace">
+        <!-- Line Numbers + Dual-Layer Editor Workspace -->
+        <div class="editor-workspace editor-container">
             <div id="lineNumbers" class="line-numbers">1</div>
-            <textarea id="editor" placeholder="Select a file from the explorer to edit..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+            <div class="editor-wrapper">
+                <div id="highlightLayer" class="highlight-layer"></div>
+                <textarea id="editor" class="editor-textarea" placeholder="Select a file from the explorer to edit..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+            </div>
         </div>
     </section>
 </div>
