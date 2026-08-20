@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Mobile Workspace Editor</title>
-    <link rel="stylesheet" href="style.css?v=20260820-0441">
+    <link rel="stylesheet" href="style.css?v=20260820-git-sync-v7">
     <!-- JSZip for Exporting Workspace -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <!-- Prism.js for Syntax Highlighting -->
@@ -12,7 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
 </head>
-<body data-build="SafariSafe-v4-20260820-0446">
+<body data-build="SafariSafe-v7-GitSync-20260820">
     <div class="app-container" id="appContainer">
         <!-- App Header & Navigation -->
         <header class="app-header" id="appHeader">
@@ -53,6 +53,13 @@
                         </select>
                     </div>
                     <button class="btn btn-success" id="pullGitHubBtn">⬇️ Pull Repo</button>
+                    <div class="gh-sync-card" id="ghSyncCard">
+                        <div class="gh-sync-title">Git Sync</div>
+                        <div class="gh-sync-row"><span>Workspace:</span><strong id="ghSyncRepo">Not bound yet</strong></div>
+                        <div class="gh-sync-row"><span>Branch:</span><strong id="ghSyncBranch">—</strong></div>
+                        <div class="gh-sync-changes" id="ghSyncChanges">Pull a repo once to create a sync baseline.</div>
+                        <div class="gh-sync-progress" id="ghSyncProgress" aria-live="polite"></div>
+                    </div>
                 </div>
             </details>
 
@@ -64,7 +71,7 @@
                     <input type="file" id="uploadInput" multiple style="display: none;">
                 </label>
                 <button class="btn btn-warning" id="exportWorkspaceBtn">📦 Export ZIP</button>
-                <button class="btn btn-secondary" id="pushAllGitHubBtn">☁️ Push All</button>
+                <button class="btn btn-secondary" id="pushAllGitHubBtn" disabled>☁️ Push Changes</button>
             </div>
 
             <!-- File Manager Tree Window -->
@@ -158,6 +165,6 @@
         </div>
     </div>
 
-    <script src="app-safari-v6.js?v=6-stable-folder-tap"></script>
+    <script src="app-safari-v7.js?v=7-git-sync"></script>
 </body>
 </html>

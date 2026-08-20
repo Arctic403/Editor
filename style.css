@@ -631,3 +631,78 @@ mark.search-highlight {
     cursor: pointer;
 }
 .quick-item:hover { background: #0e639c; color: #fff; }
+
+
+/* Git sync v7 */
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.gh-sync-card {
+    margin-top: 2px;
+    padding: 9px 10px;
+    border: 1px solid #3c3c3c;
+    border-radius: 5px;
+    background: #1e1e1e;
+    font-size: 0.76rem;
+}
+
+.gh-sync-title {
+    font-weight: 700;
+    color: #4fc1ff;
+    margin-bottom: 5px;
+}
+
+.gh-sync-row {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    min-width: 0;
+    margin: 2px 0;
+}
+
+.gh-sync-row span {
+    color: #9d9d9d;
+    flex: 0 0 auto;
+}
+
+.gh-sync-row strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gh-sync-changes {
+    margin-top: 6px;
+    color: #d7d7d7;
+    line-height: 1.35;
+}
+
+.gh-sync-progress {
+    margin-top: 5px;
+    min-height: 1em;
+    color: #9cdcfe;
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+.gh-sync-progress.success { color: #89d185; }
+.gh-sync-progress.error { color: #f48771; }
+
+body.theme-light .gh-sync-card {
+    background: #ffffff;
+    border-color: #d8d8d8;
+    color: #1e1e1e;
+}
+body.theme-light .gh-sync-title { color: #0067a3; }
+body.theme-light .gh-sync-row span { color: #666666; }
+body.theme-light .gh-sync-changes { color: #333333; }
+body.theme-light .gh-sync-progress { color: #0067a3; }
+body.theme-light .gh-sync-progress.success { color: #237a2f; }
+body.theme-light .gh-sync-progress.error { color: #b42318; }
+body.theme-monokai .gh-sync-card {
+    background: #272822;
+    border-color: #3e3d32;
+}
