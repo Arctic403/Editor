@@ -1,3 +1,6 @@
+// Universal Text Extension Regex
+const TEXT_EXTENSIONS_REGEX = /\.(txt|json|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|html|htm|md|xml|cfg|ini|lua|py|cpp|c|h|hpp|cs|java|go|rs|php|rb|sh|bat|ps1|sql|yaml|yml|toml|env|gitignore|properties|log)$/i;
+
 // ---------------------------
 // IndexedDB Setup
 // ---------------------------
@@ -51,23 +54,18 @@ function loadFiles() {
 
 function buildFileTreeStructure(files) {
     const root = {};
-
     files.forEach(file => {
         const parts = file.name.split('/');
         let current = root;
-
         parts.forEach((part, index) => {
             if (index === parts.length - 1) {
                 current[part] = { _isFile: true, fullPath: file.name };
             } else {
-                if (!current[part]) {
-                    current[part] = { _isFile: false, _children: {} };
-                }
+                if (!current[part]) current[part] = { _isFile: false, _children: {} };
                 current = current[part]._children;
             }
         });
     });
-
     return root;
 }
 
@@ -81,8 +79,9 @@ function renderTree(node, container) {
             const ext = key.split('.').pop().toLowerCase();
             let icon = "📄";
             if (["html", "htm"].includes(ext)) icon = "🌐";
-            else if (["css"].includes(ext)) icon = "🎨";
-            else if (["js", "json"].includes(ext)) icon = "⚡";
+            else if (["css", "scss"].includes(ext)) icon = "🎨";
+            else if (["js", "ts", "jsx", "tsx", "json"].includes(ext)) icon = "⚡";
+            else if (["py", "cpp", "c", "h", "cs", "java", "rs", "go"].includes(ext)) icon = "⚙️";
 
             treeNode.innerHTML = `
                 <div class="tree-row" onclick="openFile('${item.fullPath}')">
@@ -100,11 +99,9 @@ function renderTree(node, container) {
                     <span class="tree-label">📁 <strong>${key}</strong></span>
                 </div>
             `;
-            
             renderTree(item._children, childrenContainer);
             treeNode.appendChild(childrenContainer);
         }
-
         container.appendChild(treeNode);
     }
 }
@@ -122,7 +119,7 @@ function toggleFolder(rowElement) {
 }
 
 // ---------------------------
-// File Operations
+// File Import Operations (Chrome & Safari Fixed)
 // ---------------------------
 document.getElementById("newFileBtn").onclick = function () {
     const name = prompt("Enter file path (e.g., src/index.js):");
@@ -164,7 +161,12 @@ async function importRegularFile(file) {
             tx.oncomplete = resolve;
         };
         reader.onerror = reject;
-        reader.readAsText(file);
+
+        if (file.name.match(TEXT_EXTENSIONS_REGEX)) {
+            reader.readAsText(file);
+        } else {
+            reader.readAsDataURL(file);
+        }
     });
 }
 
@@ -179,9 +181,7 @@ function readFileAsArrayBuffer(file) {
 
 async function unpackZip(zipFile) {
     try {
-        if (typeof JSZip === "undefined") {
-            throw new Error("JSZip library not loaded.");
-        }
+        if (typeof JSZip === "undefined") throw new Error("JSZip library not loaded.");
 
         const buffer = await readFileAsArrayBuffer(zipFile);
         const zip = await JSZip.loadAsync(buffer);
@@ -191,7 +191,7 @@ async function unpackZip(zipFile) {
             const entry = zip.files[path];
             if (entry.dir) continue;
 
-            const isText = entry.name.match(/\.(txt|json|js|css|html|md|xml|cfg|ini|lua)$/i);
+            const isText = entry.name.match(TEXT_EXTENSIONS_REGEX);
             let content;
 
             if (isText) {
@@ -220,15 +220,36 @@ async function unpackZip(zipFile) {
     }
 }
 
+// ---------------------------
+// File Editor & Controls
+// ---------------------------
+const editor = document.getElementById("editor");
+const lineNumbers = document.getElementById("lineNumbers");
+
+function updateLineNumbers() {
+    const lines = editor.value.split("\n").length;
+    let numbersArr = [];
+    for (let i = 1; i <= lines; i++) {
+        numbersArr.push(i);
+    }
+    lineNumbers.textContent = numbersArr.join("\n");
+}
+
+editor.addEventListener("input", updateLineNumbers);
+editor.addEventListener("scroll", () => {
+    lineNumbers.scrollTop = editor.scrollTop;
+});
+
 function openFile(name) {
     const tx = db.transaction("files", "readonly");
     const store = tx.objectStore("files");
     const req = store.get(name);
 
     req.onsuccess = function () {
-        document.getElementById("editor").value = req.result.content;
-        document.getElementById("editor").dataset.filename = name;
+        editor.value = req.result.content;
+        editor.dataset.filename = name;
         document.getElementById("activeFileLabel").textContent = "Editing: " + name;
+        updateLineNumbers();
     };
 }
 
@@ -238,25 +259,60 @@ function deleteFile(name) {
     const store = tx.objectStore("files");
     store.delete(name);
     tx.oncomplete = () => {
-        if (document.getElementById("editor").dataset.filename === name) {
-            document.getElementById("editor").value = "";
-            document.getElementById("editor").dataset.filename = "";
-            document.getElementById("activeFileLabel").textContent = "No file selected";
+        if (editor.dataset.filename === name) {
+            closeActiveFile();
         }
         loadFiles();
     };
 }
 
+function closeActiveFile() {
+    editor.value = "";
+    editor.dataset.filename = "";
+    document.getElementById("activeFileLabel").textContent = "No file selected";
+    updateLineNumbers();
+}
+
+document.getElementById("closeFileBtn").onclick = closeActiveFile;
+
 document.getElementById("saveLocalBtn").onclick = function () {
-    const name = document.getElementById("editor").dataset.filename;
+    const name = editor.dataset.filename;
     if (!name) return alert("Select a file first.");
 
-    const content = document.getElementById("editor").value;
+    const content = editor.value;
     const tx = db.transaction("files", "readwrite");
     const store = tx.objectStore("files");
     store.put({ name, content });
 
     tx.oncomplete = () => alert("Saved!");
+};
+
+// Fullscreen Toggle
+document.getElementById("fullscreenBtn").onclick = function () {
+    const appContainer = document.getElementById("appContainer");
+    appContainer.classList.toggle("fullscreen");
+    this.textContent = appContainer.classList.contains("fullscreen") ? "⛶ Exit" : "⛶ Fullscreen";
+};
+
+// Search & Replace Toggle
+document.getElementById("searchToggleBtn").onclick = function () {
+    document.getElementById("searchReplaceBar").classList.toggle("hidden");
+};
+
+document.getElementById("replaceBtn").onclick = function () {
+    const searchVal = document.getElementById("searchInput").value;
+    const replaceVal = document.getElementById("replaceInput").value;
+    if (!searchVal) return;
+    editor.value = editor.value.replace(searchVal, replaceVal);
+    updateLineNumbers();
+};
+
+document.getElementById("replaceAllBtn").onclick = function () {
+    const searchVal = document.getElementById("searchInput").value;
+    const replaceVal = document.getElementById("replaceInput").value;
+    if (!searchVal) return;
+    editor.value = editor.value.replaceAll(searchVal, replaceVal);
+    updateLineNumbers();
 };
 
 // ---------------------------
@@ -300,8 +356,8 @@ document.getElementById("pushGitHubBtn").onclick = async function () {
     const token = document.getElementById("tokenInput").value.trim();
     const repo = document.getElementById("repoInput").value.trim();
     const branch = document.getElementById("branchInput").value.trim();
-    const name = document.getElementById("editor").dataset.filename;
-    const content = document.getElementById("editor").value;
+    const name = editor.dataset.filename;
+    const content = editor.value;
 
     if (!token || !repo || !name) return alert("Select a file & fill GitHub credentials.");
 
