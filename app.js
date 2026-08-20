@@ -2,7 +2,7 @@
 // IndexedDB Setup
 // ---------------------------
 let db;
-const request = indexedDB.open("LocalWorkspaceDB", 2);
+const request = indexedDB.open("LocalWorkspaceDB", 3);
 
 request.onupgradeneeded = function (event) {
     db = event.target.result;
@@ -97,33 +97,45 @@ async function importRegularFile(file) {
 }
 
 // ---------------------------
-// Handle ZIP file
+// Handle ZIP file (FULL FIXED VERSION)
 // ---------------------------
 async function unpackZip(zipFile) {
-    const arrayBuffer = await zipFile.arrayBuffer();
-    const zip = await JSZip.loadAsync(arrayBuffer);
+    try {
+        const arrayBuffer = await zipFile.arrayBuffer();
+        const zip = await JSZip.loadAsync(arrayBuffer);
 
-    const tx = db.transaction("files", "readwrite");
-    const store = tx.objectStore("files");
+        const tx = db.transaction("files", "readwrite");
+        const store = tx.objectStore("files");
 
-    for (const filename of Object.keys(zip.files)) {
-        const entry = zip.files[filename];
+        for (const path in zip.files) {
+            const entry = zip.files[path];
 
-        if (entry.dir) continue; // skip folders
+            if (entry.dir) continue; // skip folders
 
-        // Skip binary files
-        const isBinary = /\.(png|jpg|jpeg|gif|bmp|exe|dll|bin)$/i.test(filename);
-        if (isBinary) continue;
+            // Detect binary vs text
+            const isText = entry.name.match(/\.(txt|json|js|css|html|md|xml|cfg|ini|lua)$/i);
 
-        const content = await entry.async("string");
+            let content;
 
-        store.put({
-            name: filename,
-            content: content
-        });
+            if (isText) {
+                content = await entry.async("string");
+            } else {
+                const base64 = await entry.async("base64");
+                content = "data:application/octet-stream;base64," + base64;
+            }
+
+            store.put({
+                name: entry.name,
+                content: content
+            });
+        }
+
+        return new Promise(resolve => tx.oncomplete = resolve);
+
+    } catch (err) {
+        console.error("ZIP unpack error:", err);
+        alert("Failed to unpack ZIP.");
     }
-
-    return new Promise(resolve => tx.oncomplete = resolve);
 }
 
 // ---------------------------
