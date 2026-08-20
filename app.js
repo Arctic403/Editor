@@ -83,23 +83,42 @@ document.getElementById("branchInput").addEventListener("input", e => localStora
 // ---------------------------
 function bindUIEvents() {
     const editor = document.getElementById("editor");
+    const highlightLayer = document.getElementById("highlightLayer");
     const lineNumbers = document.getElementById("lineNumbers");
+    const searchInput = document.getElementById("searchInput");
 
-    editor.addEventListener("input", updateLineNumbers);
+    // Sync input changes across Line Numbers & Background Highlights
+    editor.addEventListener("input", function () {
+        updateLineNumbers();
+        updateHighlights();
+    });
+
+    // Sync horizontal/vertical scrolling across all three layers
     editor.addEventListener("scroll", function () {
         lineNumbers.scrollTop = editor.scrollTop;
+        if (highlightLayer) {
+            highlightLayer.scrollTop = editor.scrollTop;
+            highlightLayer.scrollLeft = editor.scrollLeft;
+        }
     });
+
+    // Live update search highlights as you type in search field
+    if (searchInput) {
+        searchInput.addEventListener("input", updateHighlights);
+    }
 
     bindClick("closeFileBtn", function () {
         editor.value = "";
         editor.dataset.filename = "";
         document.getElementById("activeFileLabel").textContent = "No file selected";
         updateLineNumbers();
+        updateHighlights();
     });
 
     bindClick("searchToggleBtn", function () {
         const bar = document.getElementById("searchReplaceBar");
         bar.classList.toggle("hidden");
+        updateHighlights();
     });
 
     bindClick("fullscreenBtn", function () {
@@ -126,7 +145,7 @@ function bindUIEvents() {
         if (index !== -1) {
             editor.focus();
             
-            // Set text range selection (Highlights text)
+            // Set text range selection (Highlights text cursor position)
             editor.setSelectionRange(index, index + searchVal.length);
             lastSearchIndex = index + searchVal.length;
 
@@ -134,6 +153,8 @@ function bindUIEvents() {
             const linesBefore = text.substring(0, index).split("\n").length;
             const lineHeight = 20; // Approximate line height in px
             editor.scrollTop = (linesBefore - 2) * lineHeight;
+            
+            updateHighlights();
         } else {
             alert(`No matches found for "${searchVal}".`);
             lastSearchIndex = 0;
@@ -155,6 +176,7 @@ function bindUIEvents() {
         if (confirm(`Replace next instance of "${searchVal}" with "${replaceVal}"?`)) {
             editor.value = text.replace(searchVal, replaceVal);
             updateLineNumbers();
+            updateHighlights();
         }
     });
 
@@ -175,6 +197,7 @@ function bindUIEvents() {
         if (confirm(`Replace all ${matches} occurrence(s) of "${searchVal}" with "${replaceVal}"?`)) {
             editor.value = editor.value.replace(regex, replaceVal);
             updateLineNumbers();
+            updateHighlights();
             alert(`Replaced ${matches} instance(s).`);
         }
     });
@@ -251,6 +274,15 @@ function bindUIEvents() {
     });
 }
 
+function escapeHtml(text) {
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -264,6 +296,36 @@ function updateLineNumbers() {
         numbersArr.push(i);
     }
     lineNumbers.textContent = numbersArr.join("\n");
+}
+
+function updateHighlights() {
+    const editor = document.getElementById("editor");
+    const highlightLayer = document.getElementById("highlightLayer");
+    const searchInput = document.getElementById("searchInput");
+    const searchBar = document.getElementById("searchReplaceBar");
+
+    if (!highlightLayer) return;
+
+    let text = editor.value;
+    
+    // Trailing newline check so editor cursor vertical align matches exact height
+    if (text.endsWith("\n")) {
+        text += " ";
+    }
+
+    const searchVal = searchInput ? searchInput.value : "";
+    
+    // Hide highlights if search bar is hidden or query empty
+    if (!searchVal || (searchBar && searchBar.classList.contains("hidden"))) {
+        highlightLayer.innerHTML = escapeHtml(text);
+        return;
+    }
+
+    const escapedText = escapeHtml(text);
+    const escapedSearch = escapeHtml(searchVal);
+    const regex = new RegExp(`(${escapeRegExp(escapedSearch)})`, "gi");
+
+    highlightLayer.innerHTML = escapedText.replace(regex, `<mark class="search-highlight">$1</mark>`);
 }
 
 // ---------------------------
@@ -480,6 +542,7 @@ function openFile(name) {
         document.getElementById("activeFileLabel").textContent = "Editing: " + name;
         lastSearchIndex = 0;
         updateLineNumbers();
+        updateHighlights();
     };
 }
 
@@ -495,6 +558,7 @@ function deleteFile(name) {
             editor.dataset.filename = "";
             document.getElementById("activeFileLabel").textContent = "No file selected";
             updateLineNumbers();
+            updateHighlights();
         }
         loadFiles();
     };
@@ -525,6 +589,7 @@ function deleteFolder(folderPath) {
 
         tx.oncomplete = () => {
             updateLineNumbers();
+            updateHighlights();
             loadFiles();
         };
     };
