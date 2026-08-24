@@ -11,6 +11,8 @@
     history: "riftcity_ai_task_history_v2",
     conversation: "riftcity_ai_conversation_v2",
     model: "riftcity_ai_model_v2",
+    endpoint: "riftcity_ai_endpoint_v1",
+    healthEndpoint: "riftcity_ai_health_endpoint_v1",
   };
 
   const LIMITS = {
@@ -111,6 +113,12 @@
           <label class="codex-label" for="codexWorkerUrl">Cloudflare Worker URL</label>
           <input class="codex-input" id="codexWorkerUrl" placeholder="https://your-worker.your-subdomain.workers.dev" autocapitalize="off" autocomplete="off">
           <div style="height:8px"></div>
+          <label class="codex-label" for="codexEndpoint">AI endpoint</label>
+          <input class="codex-input" id="codexEndpoint" placeholder="/api/ai/run or full https://... URL" autocapitalize="off" autocomplete="off">
+          <div style="height:8px"></div>
+          <label class="codex-label" for="codexHealthEndpoint">Health endpoint</label>
+          <input class="codex-input" id="codexHealthEndpoint" placeholder="/health or full https://... URL" autocapitalize="off" autocomplete="off">
+          <div style="height:8px"></div>
           <label class="codex-label" for="codexAppToken">Private app token (optional but recommended)</label>
           <input class="codex-input" id="codexAppToken" type="password" placeholder="Matches AI_APP_TOKEN secret" autocomplete="off">
           <div style="height:8px"></div>
@@ -187,6 +195,8 @@
     document.body.appendChild(panel);
 
     $("codexWorkerUrl").value = localStorage.getItem(STORAGE.workerUrl) || "";
+    $("codexEndpoint").value = localStorage.getItem(STORAGE.endpoint) || "/api/ai/run";
+    $("codexHealthEndpoint").value = localStorage.getItem(STORAGE.healthEndpoint) || "/health";
     $("codexAppToken").value = localStorage.getItem(STORAGE.appToken) || "";
     $("codexModel").value = localStorage.getItem(STORAGE.model) || "";
 
@@ -213,9 +223,13 @@
 
   function saveSettings() {
     const url = normalizeUrl($("codexWorkerUrl").value);
+    const endpoint = $("codexEndpoint").value.trim() || "/api/ai/run";
+    const healthEndpoint = $("codexHealthEndpoint").value.trim() || "/health";
     const token = $("codexAppToken").value.trim();
     const model = $("codexModel").value.trim();
     localStorage.setItem(STORAGE.workerUrl, url);
+    localStorage.setItem(STORAGE.endpoint, endpoint);
+    localStorage.setItem(STORAGE.healthEndpoint, healthEndpoint);
     localStorage.setItem(STORAGE.appToken, token);
     localStorage.setItem(STORAGE.model, model);
     setStatus("Settings saved.");
@@ -224,18 +238,30 @@
   function getSettings() {
     return {
       workerUrl: normalizeUrl(localStorage.getItem(STORAGE.workerUrl) || $("codexWorkerUrl")?.value || ""),
+      endpoint: (localStorage.getItem(STORAGE.endpoint) || $("codexEndpoint")?.value || "/api/ai/run").trim(),
+      healthEndpoint: (localStorage.getItem(STORAGE.healthEndpoint) || $("codexHealthEndpoint")?.value || "/health").trim(),
       appToken: localStorage.getItem(STORAGE.appToken) || $("codexAppToken")?.value || "",
       model: localStorage.getItem(STORAGE.model) || $("codexModel")?.value || "",
     };
   }
 
+
+  function resolveEndpoint(workerUrl, endpoint, fallback) {
+    const value = String(endpoint || fallback || "").trim();
+    if (/^https?:\/\//i.test(value)) return value.replace(/\/+$/, "");
+    if (!workerUrl) return "";
+    const path = value.startsWith("/") ? value : `/${value}`;
+    return `${workerUrl}${path}`;
+  }
+
   async function testWorker() {
-    const { workerUrl, appToken } = getSettings();
+    const { workerUrl, healthEndpoint, appToken } = getSettings();
     if (!workerUrl) return setStatus("Add your Worker URL first.");
     try {
       setBusy(true);
       setStatus("Testing Worker…");
-      const response = await fetch(`${workerUrl}/health`, {
+      const healthUrl = resolveEndpoint(workerUrl, healthEndpoint, "/health");
+      const response = await fetch(healthUrl, {
         headers: appToken ? { "X-Editor-AI-Token": appToken } : {},
       });
       const data = await response.json().catch(() => ({}));
@@ -381,7 +407,7 @@
 
   async function runAi(forcedPrompt = "", readOnly = false) {
     if (state.busy) return;
-    const { workerUrl, appToken, model } = getSettings();
+    const { workerUrl, endpoint, appToken, model } = getSettings();
     const prompt = (forcedPrompt || $("codexPrompt").value).trim();
     if (!workerUrl) {
       $("codexSettingsCard").hidden = false;
@@ -403,7 +429,8 @@
       const chars = files.reduce((n, f) => n + f.content.length, 0);
       setStatus(`Sending ${files.length} file(s) • ${(chars / 1000).toFixed(0)}k characters…`);
 
-      const response = await fetch(`${workerUrl}/api/ai/run`, {
+      const runUrl = resolveEndpoint(workerUrl, endpoint, "/api/ai/run");
+      const response = await fetch(runUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
