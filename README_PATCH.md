@@ -10,3 +10,14 @@
 - Search, Regions, and Symbols are temporary overlays opened from Tools rather than permanent rows.
 - Preserves Git pull/push, Git sync baseline, Safari IndexedDB, folder tree, project search, Git diff, diagnostics, preview, history, rename/import helper and RiftCity dev tools.
 - Removed obsolete historical app/IDE JavaScript copies from the deployment package to prevent accidental loading/caching confusion.
+
+## Codex integration (2026-08-24)
+
+- Added `codex-panel.js` to the editor UI.
+- Added `codex-backend/` with a JavaScript Node bridge using `@openai/codex-sdk`.
+- The editor sends a temporary copy of workspace text files to the bridge.
+- Codex edits only the temporary server-side workspace and returns proposed changes.
+- Changes are written into the editor's IndexedDB workspace only after **Apply**.
+- Existing GitHub Push remains a separate/manual step.
+- `OPENAI_API_KEY` belongs only on the bridge server; never put it in the browser build.
+- See `CODEX_SETUP.txt` for deployment/configuration.

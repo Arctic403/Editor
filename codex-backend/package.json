@@ -1,0 +1,14 @@
+{
+  "name": "riftcity-codex-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node codex-bridge.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "latest"
+  }
+}
