@@ -1,48 +1,8 @@
-RIFTCITY MOBILE WORKSPACE - CODEX SETUP
+LOCAL BRIDGE RETIRED
+====================
 
-1) EDITOR SIDE
-Place codex-panel.js beside index.html.
+This editor now uses the Cloudflare Worker route so it works from iPhone without a PC or localhost server.
 
-At the very bottom of index.html, AFTER these existing lines:
-  <script src="app-safari-v11.js?v=12-folder-core"></script>
-  <script src="ide-v11.js?v=12-folder-shell"></script>
+Use AI_WORKER_SETUP.md and the cloudflare-ai-worker/ folder.
 
-add:
-  <script src="codex-panel.js?v=1"></script>
-
-2) CODEX BACKEND
-The browser editor cannot run the Codex App Server/SDK itself because Codex needs a server/local process with filesystem + subprocess access.
-Run codex-bridge.mjs on a Node 18+ server/container.
-
-Put these together in the backend folder:
-  codex-bridge.mjs
-  package.json
-
-Then install:
-  npm install
-
-Set environment variables:
-  OPENAI_API_KEY=your OpenAI API key
-  CODEX_BRIDGE_TOKEN=a long random private token
-  EDITOR_ORIGIN=https://YOUR-EDITOR-DOMAIN.example
-  PORT=8788
-
-Start:
-  npm start
-
-3) CONNECT THE EDITOR
-Open the editor -> Codex -> Settings.
-Set:
-  Bridge URL: https://YOUR-CODEX-BACKEND.example
-  Bridge token: the same CODEX_BRIDGE_TOKEN
-
-The OpenAI API key stays only on the backend. Never put OPENAI_API_KEY in index.html, codex-panel.js, GitHub Pages, or localStorage.
-
-4) HOW IT WORKS
-- Editor sends a temporary copy of selected workspace text files to the backend.
-- Backend creates a temporary workspace.
-- Codex SDK runs against that workspace with filesystem write access but network access disabled.
-- Backend compares before/after files and returns proposed changes.
-- Editor shows the changes.
-- Nothing is written to your real IndexedDB workspace until you click Apply.
-- GitHub is still separate; review changes, then use your existing Push flow.
+The old codex-backend/ folder is no longer required and has been removed from this patched build.

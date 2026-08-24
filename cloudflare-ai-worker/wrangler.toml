@@ -1,0 +1,14 @@
+name = "riftcity-workspace-ai"
+main = "src/index.js"
+compatibility_date = "2026-08-24"
+
+[vars]
+# Change this to your editor's exact public origin for tighter CORS, e.g.
+# EDITOR_ORIGIN = "https://yourname.github.io"
+EDITOR_ORIGIN = "*"
+OPENAI_MODEL = "gpt-5.1"
+MAX_OUTPUT_TOKENS = "18000"
+
+# Secrets are NOT written here.
+# Required: OPENAI_API_KEY
+# Recommended: AI_APP_TOKEN
