@@ -44,7 +44,14 @@ export default {
       return json({ ok: true, service: "riftcity-workspace-ai", model: env.OPENAI_MODEL || "gpt-5.1" }, 200, cors);
     }
 
-    if (url.pathname !== "/api/ai/run" || request.method !== "POST") return json({ error: "Not found." }, 404, cors);
+    // Keep API routing explicit so unknown /api/* paths return JSON 404s, while
+    // every normal browser request falls through to the editor's static assets.
+    if (url.pathname !== "/api/ai/run") {
+      if (url.pathname.startsWith("/api/")) return json({ error: "Not found." }, 404, cors);
+      if (env.ASSETS) return env.ASSETS.fetch(request);
+      return json({ error: "Not found." }, 404, cors);
+    }
+    if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, cors);
     if (!authorized(request, env)) return json({ error: "Unauthorized." }, 401, cors);
     if (!env.OPENAI_API_KEY) return json({ error: "OPENAI_API_KEY secret is not configured on this Worker." }, 500, cors);
 

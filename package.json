@@ -1,11 +1,11 @@
 {
-  "name": "riftcity-workspace-ai-worker",
+  "name": "riftcity-editor",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "node --check src/index.js"
+    "check": "node --check cloudflare-ai-worker/src/index.js && node --check codex-panel.js"
   },
   "devDependencies": {
     "wrangler": "^4.20.0"

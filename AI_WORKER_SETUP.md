@@ -1,15 +1,37 @@
-# iPhone AI setup
+# iPhone AI setup — single Worker deployment
 
-The editor is already patched to use the Cloudflare Worker in `cloudflare-ai-worker/`.
+This project is now configured so **one Cloudflare Worker named `editor` serves both the editor UI and the AI bridge**.
 
-1. Create/deploy a Cloudflare Worker using the contents of `cloudflare-ai-worker/`.
-2. Add `OPENAI_API_KEY` as a Worker secret.
-3. Strongly recommended: add `AI_APP_TOKEN` as another Worker secret using a long random value.
-4. Copy the deployed `https://...workers.dev` URL.
-5. Open the editor, tap **✦ AI** -> **Settings**.
-6. Paste the Worker URL. If you created `AI_APP_TOKEN`, paste the same token into **Private app token**.
+That means the same URL handles all three of these:
+
+- `/` — the editor
+- `/health` — bridge health check
+- `/api/ai/run` — AI requests
+
+## Cloudflare setup
+
+1. Deploy the repository root with Wrangler/Cloudflare Workers. The root `wrangler.toml` is the source of truth.
+2. Add `OPENAI_API_KEY` as a Worker **secret**.
+3. Recommended: add `AI_APP_TOKEN` as another Worker secret using a long random value.
+4. The Worker is configured with the name `editor` and `workers_dev = true`, so its workers.dev URL is expected to be `https://editor.<your-workers-subdomain>.workers.dev`.
+5. In Editor -> AI -> Settings, use that base URL only. Do not append `/health` or `/api/ai/run`.
+6. If `AI_APP_TOKEN` is set on Cloudflare, enter the same value into **Private app token** in the editor.
 7. Tap **Test Worker**.
 
-The OpenAI key stays only inside Cloudflare. Do not paste the OpenAI key into the editor.
+## Why this fixes the previous 404
 
-The AI panel includes Smart/Active/Workspace context modes, active selection context, project review, structured multi-file edits, per-file diff previews, Apply/Reject/Apply All, undo for the last AI apply, task history, conversation continuity, request-size trimming, and GitHub-safe explicit push separation.
+The old ZIP treated the editor and `cloudflare-ai-worker/` as separate deployments. The AI Worker was named `riftcity-workspace-ai`, while the editor was being tested against an `editor....workers.dev` URL. A request to `/health` could therefore reach the editor/static deployment instead of the AI Worker and return 404.
+
+The root `wrangler.toml` now deploys the AI Worker as the `editor` Worker and binds the repository root as static assets. Worker code runs first, handles `/health` and `/api/ai/run`, and passes all normal requests through to the static editor via the `ASSETS` binding.
+
+## Secrets
+
+Never put the OpenAI API key in `wrangler.toml`, `index.html`, or `codex-panel.js`.
+
+Required:
+
+- `OPENAI_API_KEY`
+
+Recommended:
+
+- `AI_APP_TOKEN`

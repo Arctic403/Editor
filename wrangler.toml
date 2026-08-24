@@ -1,5 +1,5 @@
 name = "editor"
-main = "src/index.js"
+main = "cloudflare-ai-worker/src/index.js"
 compatibility_date = "2026-08-24"
 workers_dev = true
 
@@ -9,7 +9,7 @@ OPENAI_MODEL = "gpt-5.1"
 MAX_OUTPUT_TOKENS = "18000"
 
 [assets]
-directory = ".."
+directory = "."
 binding = "ASSETS"
 run_worker_first = true
 not_found_handling = "single-page-application"
