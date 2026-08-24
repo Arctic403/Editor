@@ -106,17 +106,17 @@ export default {
   },
 };
 
-function corsHeaders(request, env) {
-  const incoming = request.headers.get("Origin") || "";
-  const configured = String(env.EDITOR_ORIGIN || "*").trim();
-  const allowOrigin = configured === "*" ? "*" : (incoming === configured ? configured : "null");
+function corsHeaders() {
+  // The editor may be served from Workers, Pages, GitHub Pages, Safari previews,
+  // or a local/file origin. Do not reject a valid bridge request just because
+  // the browser Origin does not exactly match an optional environment value.
+  // Authentication is handled separately by AI_APP_TOKEN.
   return {
-    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,X-Editor-AI-Token",
+    "Access-Control-Allow-Headers": "Content-Type,X-Editor-AI-Token,Accept",
     "Access-Control-Max-Age": "86400",
     "Cache-Control": "no-store",
-    "Vary": "Origin",
   };
 }
 
