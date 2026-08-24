@@ -262,7 +262,10 @@
       setStatus("Testing Worker…");
       const healthUrl = resolveEndpoint(workerUrl, healthEndpoint, "/health");
       const response = await fetch(healthUrl, {
-        headers: appToken ? { "X-Editor-AI-Token": appToken } : {},
+        method: "GET",
+        mode: "cors",
+        cache: "no-store",
+        headers: { "Accept": "application/json" },
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || `Worker returned ${response.status}`);

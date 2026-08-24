@@ -38,7 +38,9 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === "/health" && request.method === "GET") {
-      if (!authorized(request, env)) return json({ error: "Unauthorized." }, 401, cors);
+      // Keep health public so the browser can verify connectivity without
+      // triggering a token-header CORS preflight. The actual AI route
+      // remains protected by AI_APP_TOKEN.
       return json({ ok: true, service: "riftcity-workspace-ai", model: env.OPENAI_MODEL || "gpt-5.1" }, 200, cors);
     }
 
