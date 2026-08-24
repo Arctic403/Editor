@@ -55,6 +55,17 @@ export default {
     if (!authorized(request, env)) return json({ error: "Unauthorized." }, 401, cors);
     if (!env.OPENAI_API_KEY) return json({ error: "OPENAI_API_KEY secret is not configured on this Worker." }, 500, cors);
 
+    // Server-side backstop against accidental button spam or a buggy client loop.
+    // This limits request frequency only; it does NOT reduce the size of a valid edit.
+    const allowed = await aiRequestAllowed(request, env);
+    if (!allowed) {
+      return json(
+        { error: "Too many AI requests. Wait up to 60 seconds and try again." },
+        429,
+        { ...cors, "Retry-After": "60" },
+      );
+    }
+
     try {
       const body = await readJsonBody(request);
       const task = validateRequest(body);
@@ -114,6 +125,26 @@ export default {
     }
   },
 };
+
+async function aiRequestAllowed(request, env) {
+  if (!env.AI_RATE_LIMITER || typeof env.AI_RATE_LIMITER.limit !== "function") return true;
+
+  // Prefer the private editor token as the actor key. Hash it before handing it
+  // to the limiter so the secret itself is never used as stored counter text.
+  const token = String(request.headers.get("X-Editor-AI-Token") || "");
+  let actor;
+  if (token) {
+    const bytes = new TextEncoder().encode(token);
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    actor = `token:${Array.from(new Uint8Array(digest).slice(0, 12), b => b.toString(16).padStart(2, "0")).join("")}`;
+  } else {
+    // Fallback only for installations that have not configured AI_APP_TOKEN.
+    actor = `ip:${request.headers.get("CF-Connecting-IP") || "anonymous"}`;
+  }
+
+  const { success } = await env.AI_RATE_LIMITER.limit({ key: `${actor}:/api/ai/run` });
+  return Boolean(success);
+}
 
 function corsHeaders() {
   // The editor may be served from Workers, Pages, GitHub Pages, Safari previews,

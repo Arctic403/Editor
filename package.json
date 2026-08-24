@@ -8,6 +8,6 @@
     "check": "node --check cloudflare-ai-worker/src/index.js && node --check codex-panel.js"
   },
   "devDependencies": {
-    "wrangler": "^4.20.0"
+    "wrangler": "^4.36.0"
   }
 }
