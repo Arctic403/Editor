@@ -1,0 +1,14 @@
+{
+  "name": "riftcity-editor-codex-host",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check app-server-client.js"
+  },
+  "dependencies": {
+    "@openai/codex": "0.149.1",
+    "@openai/codex-sdk": "0.149.1"
+  }
+}

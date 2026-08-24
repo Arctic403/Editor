@@ -1,12 +1,15 @@
-/* RiftCity Mobile Workspace - Cloudflare AI coding panel
+/* RiftCity Mobile Workspace - Codex / AI coding panel
    Browser-only client. Loads AFTER app-safari-v11.js + ide-v11.js.
-   The OpenAI API key never belongs in this file; requests go through the Cloudflare Worker.
+   Codex mode talks to the companion Codex host; optional API mode talks to the Cloudflare Worker.
 */
 (() => {
   "use strict";
 
   const STORAGE = {
     workerUrl: "riftcity_ai_worker_url",
+    provider: "riftcity_ai_provider_v1",
+    codexUrl: "riftcity_codex_host_url_v1",
+    codexToken: "riftcity_codex_bridge_token_v1",
     appToken: "riftcity_ai_app_token",
     history: "riftcity_ai_task_history_v2",
     conversation: "riftcity_ai_conversation_v2",
@@ -93,7 +96,7 @@
     launch.id = "codexLaunchBtn";
     launch.className = "codex-launch-btn";
     launch.type = "button";
-    launch.textContent = "✦ AI";
+    launch.textContent = "✦ Codex";
     launch.addEventListener("click", () => $("codexPanel").classList.add("open"));
     document.body.appendChild(launch);
 
@@ -103,33 +106,48 @@
     panel.setAttribute("aria-label", "AI coding assistant");
     panel.innerHTML = `
       <div class="codex-head">
-        <strong>✦ Workspace AI</strong>
+        <strong>✦ Codex Workspace</strong>
         <button id="codexHistoryBtn" type="button">History</button>
         <button id="codexSettingsBtn" type="button">Settings</button>
         <button id="codexCloseBtn" type="button" aria-label="Close AI panel">✕</button>
       </div>
       <div class="codex-body">
         <div class="codex-card" id="codexSettingsCard" hidden>
-          <label class="codex-label" for="codexWorkerUrl">Cloudflare Worker URL</label>
-          <input class="codex-input" id="codexWorkerUrl" placeholder="https://your-worker.your-subdomain.workers.dev" autocapitalize="off" autocomplete="off">
+          <label class="codex-label" for="codexProvider">Provider</label>
+          <select class="codex-select" id="codexProvider">
+            <option value="codex">Codex (ChatGPT plan)</option>
+            <option value="api">OpenAI API Worker (paid API)</option>
+          </select>
           <div style="height:8px"></div>
-          <label class="codex-label" for="codexEndpoint">AI endpoint</label>
-          <input class="codex-input" id="codexEndpoint" placeholder="/api/ai/run or full https://... URL" autocapitalize="off" autocomplete="off">
+          <label class="codex-label" for="codexWorkerUrl" id="codexBridgeUrlLabel">Codex host URL</label>
+          <input class="codex-input" id="codexWorkerUrl" placeholder="https://your-codex-host.example.com" autocapitalize="off" autocomplete="off">
           <div style="height:8px"></div>
-          <label class="codex-label" for="codexHealthEndpoint">Health endpoint</label>
-          <input class="codex-input" id="codexHealthEndpoint" placeholder="/health or full https://... URL" autocapitalize="off" autocomplete="off">
-          <div style="height:8px"></div>
-          <label class="codex-label" for="codexAppToken">Private app token (optional but recommended)</label>
-          <input class="codex-input" id="codexAppToken" type="password" placeholder="Matches AI_APP_TOKEN secret" autocomplete="off">
+          <div id="codexAdvancedEndpoints">
+            <label class="codex-label" for="codexEndpoint">Run endpoint</label>
+            <input class="codex-input" id="codexEndpoint" placeholder="/api/codex/run" autocapitalize="off" autocomplete="off">
+            <div style="height:8px"></div>
+            <label class="codex-label" for="codexHealthEndpoint">Health endpoint</label>
+            <input class="codex-input" id="codexHealthEndpoint" placeholder="/health" autocapitalize="off" autocomplete="off">
+            <div style="height:8px"></div>
+          </div>
+          <label class="codex-label" for="codexAppToken" id="codexTokenLabel">Private bridge token (recommended)</label>
+          <input class="codex-input" id="codexAppToken" type="password" placeholder="Matches EDITOR_BRIDGE_TOKEN on Codex host" autocomplete="off">
           <div style="height:8px"></div>
           <label class="codex-label" for="codexModel">Model override (optional)</label>
-          <input class="codex-input" id="codexModel" placeholder="Leave blank to use Worker default" autocapitalize="off" autocomplete="off">
+          <input class="codex-input" id="codexModel" placeholder="Leave blank to use Codex default" autocapitalize="off" autocomplete="off">
           <div style="height:8px"></div>
           <div class="codex-actions">
             <button class="codex-btn primary" id="codexSaveSettings" type="button">Save</button>
-            <button class="codex-btn" id="codexTestWorker" type="button">Test Worker</button>
+            <button class="codex-btn" id="codexTestWorker" type="button">Test Bridge</button>
           </div>
-          <div class="codex-muted" style="margin-top:8px">Your OpenAI API key stays in Cloudflare as a secret and is never stored in this editor.</div>
+          <div id="codexAuthActions" style="margin-top:8px">
+            <div class="codex-actions">
+              <button class="codex-btn good" id="codexLoginBtn" type="button">Sign in with ChatGPT</button>
+              <button class="codex-btn" id="codexAccountBtn" type="button">Check account</button>
+            </div>
+            <div class="codex-muted" id="codexAuthInfo" style="margin-top:8px">Codex login is stored only on the Codex host. Your ChatGPT OAuth tokens never enter this editor.</div>
+          </div>
+          <div class="codex-muted" id="codexProviderHelp" style="margin-top:8px">Codex mode uses your ChatGPT plan through the official Codex runtime; no OPENAI_API_KEY is needed.</div>
         </div>
 
         <div class="codex-card" id="codexHistoryCard" hidden>
@@ -194,17 +212,27 @@
       </div>`;
     document.body.appendChild(panel);
 
-    $("codexWorkerUrl").value = localStorage.getItem(STORAGE.workerUrl) || "";
-    $("codexEndpoint").value = localStorage.getItem(STORAGE.endpoint) || "/api/ai/run";
+    $("codexProvider").value = localStorage.getItem(STORAGE.provider) || "codex";
+    const initialProvider = $("codexProvider").value;
+    $("codexWorkerUrl").value = initialProvider === "codex"
+      ? (localStorage.getItem(STORAGE.codexUrl) || "")
+      : (localStorage.getItem(STORAGE.workerUrl) || "");
+    $("codexEndpoint").value = localStorage.getItem(STORAGE.endpoint) || defaultRunEndpoint(initialProvider);
     $("codexHealthEndpoint").value = localStorage.getItem(STORAGE.healthEndpoint) || "/health";
-    $("codexAppToken").value = localStorage.getItem(STORAGE.appToken) || "";
+    $("codexAppToken").value = initialProvider === "codex"
+      ? (localStorage.getItem(STORAGE.codexToken) || "")
+      : (localStorage.getItem(STORAGE.appToken) || "");
     $("codexModel").value = localStorage.getItem(STORAGE.model) || "";
+    updateProviderUi();
 
     $("codexCloseBtn").onclick = () => panel.classList.remove("open");
     $("codexSettingsBtn").onclick = () => toggleCard("codexSettingsCard");
     $("codexHistoryBtn").onclick = () => { toggleCard("codexHistoryCard"); renderHistory(); };
+    $("codexProvider").onchange = updateProviderUi;
     $("codexSaveSettings").onclick = saveSettings;
     $("codexTestWorker").onclick = testWorker;
+    $("codexLoginBtn").onclick = startCodexLogin;
+    $("codexAccountBtn").onclick = checkCodexAccount;
     $("codexRunBtn").onclick = () => runAi();
     $("codexExplainBtn").onclick = () => runAi("Explain the active file. Focus on architecture, dependencies, important behavior, and likely bugs. Do not modify files.", true);
     $("codexFixBtn").onclick = () => runAi(buildFixPrompt());
@@ -221,27 +249,67 @@
     if (card) card.hidden = !card.hidden;
   }
 
+  function defaultRunEndpoint(provider) {
+    return provider === "api" ? "/api/ai/run" : "/api/codex/run";
+  }
+
+  function updateProviderUi(event) {
+    const provider = $("codexProvider")?.value || "codex";
+    const codexMode = provider === "codex";
+    if (event?.type === "change") {
+      if ($("codexWorkerUrl")) $("codexWorkerUrl").value = codexMode
+        ? (localStorage.getItem(STORAGE.codexUrl) || "")
+        : (localStorage.getItem(STORAGE.workerUrl) || "");
+      if ($("codexAppToken")) $("codexAppToken").value = codexMode
+        ? (localStorage.getItem(STORAGE.codexToken) || "")
+        : (localStorage.getItem(STORAGE.appToken) || "");
+    }
+    const endpoint = $("codexEndpoint");
+    if (endpoint && (!endpoint.value || ["/api/ai/run", "/api/codex/run"].includes(endpoint.value.trim()))) {
+      endpoint.value = defaultRunEndpoint(provider);
+    }
+    if ($("codexBridgeUrlLabel")) $("codexBridgeUrlLabel").textContent = codexMode ? "Codex host URL" : "Cloudflare Worker URL";
+    if ($("codexTokenLabel")) $("codexTokenLabel").textContent = codexMode ? "Private bridge token (recommended)" : "Private app token (optional but recommended)";
+    if ($("codexWorkerUrl")) $("codexWorkerUrl").placeholder = codexMode ? "https://your-codex-host.example.com" : "https://your-worker.your-subdomain.workers.dev";
+    if ($("codexAppToken")) $("codexAppToken").placeholder = codexMode ? "Matches EDITOR_BRIDGE_TOKEN on Codex host" : "Matches AI_APP_TOKEN secret";
+    if ($("codexAuthActions")) $("codexAuthActions").hidden = !codexMode;
+    if ($("codexProviderHelp")) $("codexProviderHelp").textContent = codexMode
+      ? "Codex mode uses your ChatGPT plan through the official Codex runtime; no OPENAI_API_KEY is needed."
+      : "API mode uses the Cloudflare Worker and requires OPENAI_API_KEY billing separately from ChatGPT.";
+  }
+
   function saveSettings() {
+    const provider = $("codexProvider")?.value || "codex";
     const url = normalizeUrl($("codexWorkerUrl").value);
-    const endpoint = $("codexEndpoint").value.trim() || "/api/ai/run";
+    const endpoint = $("codexEndpoint").value.trim() || defaultRunEndpoint(provider);
     const healthEndpoint = $("codexHealthEndpoint").value.trim() || "/health";
     const token = $("codexAppToken").value.trim();
     const model = $("codexModel").value.trim();
-    localStorage.setItem(STORAGE.workerUrl, url);
+    localStorage.setItem(STORAGE.provider, provider);
+    if (provider === "codex") {
+      localStorage.setItem(STORAGE.codexUrl, url);
+      localStorage.setItem(STORAGE.codexToken, token);
+    } else {
+      localStorage.setItem(STORAGE.workerUrl, url);
+      localStorage.setItem(STORAGE.appToken, token);
+    }
     localStorage.setItem(STORAGE.endpoint, endpoint);
     localStorage.setItem(STORAGE.healthEndpoint, healthEndpoint);
-    localStorage.setItem(STORAGE.appToken, token);
     localStorage.setItem(STORAGE.model, model);
     setStatus("Settings saved.");
   }
 
   function getSettings() {
+    const provider = $("codexProvider")?.value || localStorage.getItem(STORAGE.provider) || "codex";
+    const savedUrl = provider === "codex" ? localStorage.getItem(STORAGE.codexUrl) : localStorage.getItem(STORAGE.workerUrl);
+    const savedToken = provider === "codex" ? localStorage.getItem(STORAGE.codexToken) : localStorage.getItem(STORAGE.appToken);
     return {
-      workerUrl: normalizeUrl(localStorage.getItem(STORAGE.workerUrl) || $("codexWorkerUrl")?.value || ""),
-      endpoint: (localStorage.getItem(STORAGE.endpoint) || $("codexEndpoint")?.value || "/api/ai/run").trim(),
-      healthEndpoint: (localStorage.getItem(STORAGE.healthEndpoint) || $("codexHealthEndpoint")?.value || "/health").trim(),
-      appToken: localStorage.getItem(STORAGE.appToken) || $("codexAppToken")?.value || "",
-      model: localStorage.getItem(STORAGE.model) || $("codexModel")?.value || "",
+      provider,
+      workerUrl: normalizeUrl($("codexWorkerUrl")?.value || savedUrl || ""),
+      endpoint: ($("codexEndpoint")?.value || localStorage.getItem(STORAGE.endpoint) || defaultRunEndpoint(provider)).trim(),
+      healthEndpoint: ($("codexHealthEndpoint")?.value || localStorage.getItem(STORAGE.healthEndpoint) || "/health").trim(),
+      appToken: $("codexAppToken")?.value || savedToken || "",
+      model: $("codexModel")?.value || localStorage.getItem(STORAGE.model) || "",
     };
   }
 
@@ -254,28 +322,98 @@
     return `${workerUrl}${path}`;
   }
 
+  function bridgeHeaders(appToken, provider, includeJson = false) {
+    return {
+      ...(includeJson ? { "Content-Type": "application/json" } : {}),
+      "Accept": "application/json",
+      ...(appToken ? { [provider === "codex" ? "X-Editor-Bridge-Token" : "X-Editor-AI-Token"]: appToken } : {}),
+    };
+  }
+
   async function testWorker() {
-    const { workerUrl, healthEndpoint, appToken } = getSettings();
-    if (!workerUrl) return setStatus("Add your Worker URL first.");
+    const { provider, workerUrl, healthEndpoint, appToken } = getSettings();
+    if (!workerUrl) return setStatus(provider === "codex" ? "Add your Codex host URL first." : "Add your Worker URL first.");
     try {
       setBusy(true);
-      setStatus("Testing Worker…");
+      setStatus(provider === "codex" ? "Testing Codex bridge…" : "Testing Worker…");
       const healthUrl = resolveEndpoint(workerUrl, healthEndpoint, "/health");
       const response = await fetch(healthUrl, {
         method: "GET",
         mode: "cors",
         cache: "no-store",
-        headers: { "Accept": "application/json" },
+        headers: bridgeHeaders(appToken, provider),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || `Worker returned ${response.status}`);
-      setStatus(`Worker online${data.model ? ` • ${data.model}` : ""}.`);
+      if (!response.ok) throw new Error(data.error || `Bridge returned ${response.status}`);
+      if (provider === "codex") {
+        if (data.codexReady === false) throw new Error(data.authError || "Codex runtime is not ready on the host.");
+        const account = data.account;
+        const plan = account?.planType ? ` • ${account.planType}` : "";
+        const auth = data.signedIn ? ` • ChatGPT signed in${plan}` : " • sign-in required";
+        setStatus(`Codex bridge online${auth}.`);
+      } else {
+        setStatus(`Worker online${data.model ? ` • ${data.model}` : ""}.`);
+      }
     } catch (error) {
-      setStatus(`Worker test failed: ${error.message}`);
+      setStatus(`${provider === "codex" ? "Codex bridge" : "Worker"} test failed: ${error.message}`);
     } finally {
       setBusy(false);
     }
   }
+
+  async function startCodexLogin() {
+    const { provider, workerUrl, appToken } = getSettings();
+    if (provider !== "codex") return setStatus("Switch Provider to Codex first.");
+    if (!workerUrl) return setStatus("Add your Codex host URL first.");
+    try {
+      setBusy(true);
+      setStatus("Starting ChatGPT device sign-in…");
+      const response = await fetch(resolveEndpoint(workerUrl, "/auth/device/start", "/auth/device/start"), {
+        method: "POST",
+        mode: "cors",
+        headers: bridgeHeaders(appToken, provider, true),
+        body: "{}",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `Bridge returned ${response.status}`);
+      if (!data.verificationUrl || !data.userCode) throw new Error("Codex did not return a device login code.");
+      const info = $("codexAuthInfo");
+      if (info) info.innerHTML = `Open <a href="${esc(data.verificationUrl)}" target="_blank" rel="noopener noreferrer" style="color:#93c5fd">ChatGPT device sign-in</a> and enter code <b style="user-select:all">${esc(data.userCode)}</b>. After approving, tap <b>Check account</b>.`;
+      setStatus(`ChatGPT sign-in started • code ${data.userCode}`);
+    } catch (error) {
+      setStatus(`Codex sign-in failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function checkCodexAccount() {
+    const { provider, workerUrl, appToken } = getSettings();
+    if (provider !== "codex") return setStatus("Switch Provider to Codex first.");
+    if (!workerUrl) return setStatus("Add your Codex host URL first.");
+    try {
+      setBusy(true);
+      setStatus("Checking Codex account…");
+      const response = await fetch(resolveEndpoint(workerUrl, "/account", "/account"), {
+        method: "GET", mode: "cors", cache: "no-store", headers: bridgeHeaders(appToken, provider),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `Bridge returned ${response.status}`);
+      const account = data.account;
+      if (!data.signedIn || !account) {
+        setStatus("Codex host is online but ChatGPT is not signed in yet.");
+        return;
+      }
+      const label = [account.email, account.planType].filter(Boolean).join(" • ");
+      setStatus(`Codex signed in${label ? ` • ${label}` : ""}.`);
+      if ($("codexAuthInfo")) $("codexAuthInfo").textContent = `Connected to ChatGPT${account.planType ? ` (${account.planType})` : ""}. OAuth credentials stay on the Codex host.`;
+    } catch (error) {
+      setStatus(`Account check failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
 
   function buildFixPrompt() {
     const editor = $("editor");
@@ -296,7 +434,7 @@
 
   function setBusy(busy) {
     state.busy = busy;
-    ["codexRunBtn", "codexExplainBtn", "codexFixBtn", "codexReviewBtn", "codexApplyAllBtn", "codexTestWorker", "codexUndoBtn"].forEach(id => {
+    ["codexRunBtn", "codexExplainBtn", "codexFixBtn", "codexReviewBtn", "codexApplyAllBtn", "codexTestWorker", "codexLoginBtn", "codexAccountBtn", "codexUndoBtn"].forEach(id => {
       const node = $(id);
       if (!node) return;
       if (id === "codexUndoBtn") node.disabled = busy || !state.undoStack.length;
@@ -410,12 +548,12 @@
 
   async function runAi(forcedPrompt = "", readOnly = false) {
     if (state.busy) return;
-    const { workerUrl, endpoint, appToken, model } = getSettings();
+    const { provider, workerUrl, endpoint, appToken, model } = getSettings();
     const prompt = (forcedPrompt || $("codexPrompt").value).trim();
     if (!workerUrl) {
       $("codexSettingsCard").hidden = false;
       $("codexPanel").classList.add("open");
-      setStatus("Add your Cloudflare Worker URL first.");
+      setStatus(provider === "codex" ? "Add your Codex host URL first." : "Add your Cloudflare Worker URL first.");
       return;
     }
     if (!prompt) return setStatus("Write a task first.");
@@ -432,13 +570,10 @@
       const chars = files.reduce((n, f) => n + f.content.length, 0);
       setStatus(`Sending ${files.length} file(s) • ${(chars / 1000).toFixed(0)}k characters…`);
 
-      const runUrl = resolveEndpoint(workerUrl, endpoint, "/api/ai/run");
+      const runUrl = resolveEndpoint(workerUrl, endpoint, defaultRunEndpoint(provider));
       const response = await fetch(runUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(appToken ? { "X-Editor-AI-Token": appToken } : {}),
-        },
+        headers: bridgeHeaders(appToken, provider, true),
         body: JSON.stringify({
           prompt,
           files,
@@ -452,7 +587,7 @@
       });
 
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || `Worker returned ${response.status}.`);
+      if (!response.ok) throw new Error(data.error || `${provider === "codex" ? "Codex bridge" : "Worker"} returned ${response.status}.`);
 
       const summary = String(data.summary || data.finalResponse || "Task complete.");
       const notes = Array.isArray(data.notes) ? data.notes.filter(Boolean) : [];
@@ -486,7 +621,7 @@
   function sanitizeChanges(changes) {
     if (!Array.isArray(changes)) return [];
     const allowed = new Set(["created", "modified", "deleted"]);
-    return changes.slice(0, 40).map(change => ({
+    return changes.slice(0, 80).map(change => ({
       path: normalizeRelativePath(change?.path || ""),
       status: allowed.has(change?.status) ? change.status : "modified",
       content: change?.status === "deleted" ? "" : String(change?.content ?? ""),
