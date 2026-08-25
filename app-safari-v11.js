@@ -838,11 +838,14 @@ async function replaceWorkspaceWithDownloadedFiles(downloadedFiles) {
     return new Promise((resolve, reject) => {
         let tx;
         try {
-            tx = database.transaction("files", "readwrite");
-            const store = tx.objectStore("files");
-            store.clear();
+            const stores = database.objectStoreNames.contains("folders") ? ["files", "folders"] : ["files"];
+            tx = database.transaction(stores, "readwrite");
+            const fileStore = tx.objectStore("files");
+            fileStore.clear();
+            if (stores.includes("folders")) tx.objectStore("folders").clear();
+
             for (const file of downloadedFiles) {
-                store.put({ name: file.path, content: file.content });
+                fileStore.put({ name: file.path, content: file.content });
             }
         } catch (err) {
             reject(err);
@@ -851,6 +854,8 @@ async function replaceWorkspaceWithDownloadedFiles(downloadedFiles) {
 
         tx.oncomplete = () => {
             workspaceHashCache.clear();
+            selectedFolderPath = "";
+            expandedFolderPaths.clear();
             resolve();
         };
         tx.onerror = () => reject(tx.error || new Error("Could not replace the local workspace."));
@@ -892,6 +897,7 @@ function refreshEditorAfterWorkspaceReplace(downloadedFiles) {
 
 async function importRepoFromGitHub(token, repo, branch) {
     await getDatabase();
+    let workspaceReplaced = false;
 
     try {
         const repoPath = githubRepoApiPath(repo);
@@ -950,6 +956,7 @@ async function importRepoFromGitHub(token, repo, branch) {
         // Clean checkout: remove local leftovers that are not part of this branch,
         // then write the downloaded repository in one IndexedDB transaction.
         await replaceWorkspaceWithDownloadedFiles(downloadedFiles);
+        workspaceReplaced = true;
 
         const baselineFiles = {};
         for (const file of downloadedFiles) {
@@ -974,6 +981,9 @@ async function importRepoFromGitHub(token, repo, branch) {
         if (branchSelect?.selectedOptions?.[0]) branchSelect.selectedOptions[0].dataset.commitSha = commitSha;
 
         refreshEditorAfterWorkspaceReplace(downloadedFiles);
+        try {
+            window.dispatchEvent(new CustomEvent("workspace:replaced", { detail: { repo, branch } }));
+        } catch (_) {}
         await loadFiles();
         setGitSyncProgress(`Pull complete: ${downloadedFiles.length} files synced @ ${commitSha.slice(0, 7)}.`, "success");
 
@@ -984,7 +994,10 @@ async function importRepoFromGitHub(token, repo, branch) {
         }
     } catch (err) {
         setGitSyncProgress("Pull failed: " + err.message, "error");
-        alert("Repository Pull Failed: " + err.message + "\n\nYour existing local workspace was left unchanged.");
+        const suffix = workspaceReplaced
+            ? "\n\nThe repository files were already downloaded into the local workspace, but final sync bookkeeping did not complete. Pull again before pushing."
+            : "\n\nYour existing local workspace was left unchanged.";
+        alert("Repository Pull Failed: " + err.message + suffix);
     }
 }
 
@@ -1303,7 +1316,19 @@ function bindUIEvents() {
         searchInput.addEventListener("input", updateHighlights);
     }
 
-    bindClick("closeFileBtn", closeCurrentFile);
+    bindClick("closeFileBtn", async function () {
+        const currentName = editor?.dataset?.filename || "";
+        if (currentName && isDirty) {
+            clearTimeout(autoSaveTimeout);
+            try {
+                await saveFileToDb(currentName, editor.value);
+                updateDirtyIndicator(false);
+            } catch (err) {
+                return alert("Could not save before closing: " + (err.message || err));
+            }
+        }
+        closeCurrentFile();
+    });
 
     bindClick("searchToggleBtn", function () {
         const bar = document.getElementById("searchReplaceBar");
@@ -1451,6 +1476,9 @@ function bindUIEvents() {
         const parent = name.includes("/") ? name.slice(0, name.lastIndexOf("/")) : "";
 
         (async () => {
+            const [files, folders] = await Promise.all([getAllWorkspaceFiles(), getAllWorkspaceFolders()]);
+            if (folders.includes(name)) return alert(`A folder already exists at "${name}". Choose a different file path.`);
+            if (files.some(file => file.name === name) && !confirm(`"${name}" already exists. Replace it with an empty file?`)) return;
             if (parent) await ensureFolderPath(parent);
             await saveFileToDb(name, "");
             await loadFiles();
@@ -1465,6 +1493,8 @@ function bindUIEvents() {
         const path = normalizeWorkspacePath(input);
         if (!path) return alert("Enter a valid folder name.");
         try {
+            const files = await getAllWorkspaceFiles();
+            if (files.some(file => file.name === path)) return alert(`A file already exists at "${path}". Choose a different folder path.`);
             await ensureFolderPath(path);
             selectedFolderPath = path;
             expandFolderPath(path);
@@ -2141,7 +2171,8 @@ async function moveWorkspaceItem(sourcePath, targetFolderPath, type = "file") {
     if (type === "file") {
         const item = files.find(f => f.name === sourcePath);
         if (!item) return alert("That file no longer exists.");
-        if ((fileNames.has(newPath) || folderNames.has(newPath)) && !confirm(`"${newPath}" already exists. Replace it?`)) return;
+        if (folderNames.has(newPath)) return alert(`Cannot move a file onto the existing folder "${newPath}".`);
+        if (fileNames.has(newPath) && !confirm(`"${newPath}" already exists. Replace it?`)) return;
         if (targetFolderPath) await ensureFolderPath(targetFolderPath);
 
         const database = await getDatabase();
@@ -2160,7 +2191,8 @@ async function moveWorkspaceItem(sourcePath, targetFolderPath, type = "file") {
     } else {
         const sourceExists = folderNames.has(sourcePath) || files.some(f => f.name.startsWith(sourcePath + "/"));
         if (!sourceExists) return alert("That folder no longer exists.");
-        if ((folderNames.has(newPath) || fileNames.has(newPath)) && !confirm(`"${newPath}" already exists. Merge into it?`)) return;
+        if (fileNames.has(newPath)) return alert(`Cannot move a folder onto the existing file "${newPath}".`);
+        if (folderNames.has(newPath) && !confirm(`"${newPath}" already exists. Merge into it?`)) return;
         if (targetFolderPath) await ensureFolderPath(targetFolderPath);
 
         const movedFiles = files.filter(f => f.name.startsWith(sourcePath + "/"));
@@ -2387,6 +2419,14 @@ async function unpackZip(zipFile) {
 
 // #region File Workspace Operations
 async function openFile(name) {
+    const editor = document.getElementById("editor");
+    const currentName = editor?.dataset?.filename || "";
+    if (editor && currentName && currentName !== name && isDirty) {
+        clearTimeout(autoSaveTimeout);
+        await saveFileToDb(currentName, editor.value);
+        updateDirtyIndicator(false);
+    }
+
     const database = await getDatabase();
 
     return await new Promise((resolve, reject) => {
@@ -2446,10 +2486,14 @@ async function deleteFile(name) {
     const store = tx.objectStore("files");
     store.delete(name);
     tx.oncomplete = () => {
+        workspaceHashCache.delete(name);
         const editor = document.getElementById("editor");
         if (editor && editor.dataset.filename === name) {
             closeCurrentFile();
         }
+        try {
+            window.dispatchEvent(new CustomEvent("workspace:file-deleted", { detail: { path: name } }));
+        } catch (_) {}
         loadFiles();
     };
 }
@@ -2477,9 +2521,15 @@ async function deleteFolder(folderPath) {
     const editor = document.getElementById("editor");
     if (editor && editor.dataset.filename && editor.dataset.filename.startsWith(prefix)) closeCurrentFile();
     if (selectedFolderPath === folderPath || selectedFolderPath.startsWith(prefix)) selectedFolderPath = "";
+    for (const file of files) {
+        if (file.name.startsWith(prefix)) workspaceHashCache.delete(file.name);
+    }
     for (const expandedPath of Array.from(expandedFolderPaths)) {
         if (expandedPath === folderPath || expandedPath.startsWith(prefix)) expandedFolderPaths.delete(expandedPath);
     }
+    try {
+        window.dispatchEvent(new CustomEvent("workspace:folder-deleted", { detail: { path: folderPath } }));
+    } catch (_) {}
     await loadFiles();
 }
 // #endregion

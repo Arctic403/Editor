@@ -3670,10 +3670,15 @@
         if (next) {
             await openFile(next);
         } else {
+            const editor = $("editor");
+            if (editor && currentEditorPathV11() === path && typeof saveFileToDb === "function") {
+                await saveFileToDb(path, editor.value);
+                if (typeof updateDirtyIndicator === "function") updateDirtyIndicator(false);
+            }
             if (typeof closeCurrentFile === "function") closeCurrentFile();
-            else {
-                const editor = $("editor");
-                if (editor) { editor.value = ""; editor.dataset.filename = ""; }
+            else if (editor) {
+                editor.value = "";
+                editor.dataset.filename = "";
             }
             if (typeof switchTab === "function") switchTab("explorer");
         }
@@ -3867,19 +3872,41 @@
     function wireEditorEventsV11() {
         window.addEventListener("workspace:file-opened", e => addOpenTabV11(e.detail?.path || ""));
         window.addEventListener("workspace:file-closed", e => removeOpenTabV11(e.detail?.path || ""));
+        window.addEventListener("workspace:file-deleted", e => removeOpenTabV11(e.detail?.path || ""));
+        window.addEventListener("workspace:folder-deleted", e => {
+            const deletedPath = e.detail?.path || "";
+            if (!deletedPath) return;
+            for (let i = openTabs.length - 1; i >= 0; i--) {
+                if (openTabs[i] === deletedPath || openTabs[i].startsWith(deletedPath + "/")) openTabs.splice(i, 1);
+            }
+            if (activeTab === deletedPath || activeTab.startsWith(deletedPath + "/")) activeTab = currentEditorPathV11() || "";
+            renderOpenFilesV11();
+            syncDockLabelV11();
+        });
         window.addEventListener("workspace:path-moved", e => {
             const oldPath = e.detail?.oldPath || "";
             const newPath = e.detail?.newPath || "";
             const isFolder = !!e.detail?.isFolder;
             if (!oldPath || !newPath) return;
-            openTabs = openTabs.map(path => path === oldPath || (isFolder && path.startsWith(oldPath + "/"))
+            const movedTabs = openTabs.map(path => path === oldPath || (isFolder && path.startsWith(oldPath + "/"))
                 ? (isFolder ? newPath + path.slice(oldPath.length) : newPath)
                 : path);
+            openTabs.splice(0, openTabs.length, ...movedTabs);
             if (activeTab === oldPath || (isFolder && activeTab.startsWith(oldPath + "/"))) {
                 activeTab = isFolder ? newPath + activeTab.slice(oldPath.length) : newPath;
             }
             renderOpenFilesV11();
             syncDockLabelV11();
+        });
+        window.addEventListener("workspace:replaced", () => {
+            openTabs.splice(0, openTabs.length);
+            activeTab = "";
+            const current = currentEditorPathV11();
+            if (current) addOpenTabV11(current);
+            else {
+                renderOpenFilesV11();
+                syncDockLabelV11();
+            }
         });
         window.addEventListener("workspace:view-changed", e => setImmersiveModeV11(e.detail?.view));
 

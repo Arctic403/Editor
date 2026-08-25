@@ -88,6 +88,38 @@
     return sha256(rows.join("\n"));
   }
 
+  async function currentWorkspaceSnapshotHash() {
+    if (typeof getAllWorkspaceFiles !== "function") throw new Error("Workspace read API is unavailable.");
+    const sourceFiles = await getAllWorkspaceFiles();
+    const files = [];
+    for (const file of sourceFiles) {
+      const path = String(file?.name || "");
+      if (!path || isSecretLikePath(path)) continue;
+      const content = typeof file.content === "string" ? file.content : String(file.content ?? "");
+      if (isBinaryWorkspaceValue(content)) continue;
+      files.push({ path, sha256: await sha256(content) });
+    }
+    return snapshotHash(files);
+  }
+
+  async function assertPatchMatchesWorkspace(patch) {
+    const repo = $("repoSelect")?.value || "";
+    const branch = $("branchSelect")?.value || "";
+
+    if (patch.target_repo && repo && patch.target_repo !== repo) {
+      throw new Error(`Patch targets ${patch.target_repo}, but the editor is currently on ${repo}.`);
+    }
+    if (patch.target_branch && branch && patch.target_branch !== branch) {
+      throw new Error(`Patch targets branch ${patch.target_branch}, but the editor is currently on ${branch}.`);
+    }
+    if (patch.base_snapshot_sha256) {
+      const currentSnapshot = await currentWorkspaceSnapshotHash();
+      if (currentSnapshot !== patch.base_snapshot_sha256) {
+        throw new Error("This patch was built from a different workspace snapshot. Export the current workspace again and get a fresh patch.");
+      }
+    }
+  }
+
   function downloadText(filename, text) {
     const blob = new Blob([text], { type: "application/json;charset=utf-8" });
     const link = document.createElement("a");
@@ -153,7 +185,9 @@
         format: FORMAT_PATCH,
         version: VERSION,
         actions: ["write", "delete"],
-        note: "For existing files, set base_sha256 to the matching exported file sha256. For a new file, set base_sha256 to null."
+        target_repo: repo || null,
+        target_branch: branch || null,
+        note: "Include target_repo, target_branch, and base_snapshot_sha256 from this export. For existing files, set base_sha256 to the matching exported file sha256. For a new file, set base_sha256 to null."
       }
     };
 
@@ -218,6 +252,8 @@
       format: FORMAT_PATCH,
       version: VERSION,
       title: String(rawPayload.title || rawPayload.commit_message || "AI patch").slice(0, 160),
+      target_repo: rawPayload.target_repo ? String(rawPayload.target_repo).slice(0, 200) : null,
+      target_branch: rawPayload.target_branch ? String(rawPayload.target_branch).slice(0, 200) : null,
       base_snapshot_sha256: rawPayload.base_snapshot_sha256 || null,
       created_at: rawPayload.created_at || new Date().toISOString(),
       changes,
@@ -480,6 +516,12 @@
     if (button?.disabled) return;
     const patch = await getPendingPatch();
     if (!patch) return alert("Pending patch is missing.");
+    try {
+      await saveDirtyEditorIfNeeded();
+      await assertPatchMatchesWorkspace(patch);
+    } catch (error) {
+      return alert(error.message || error);
+    }
     const preview = await previewPatch(patch);
     if (preview.counts.conflict) {
       await renderReview(patch);
@@ -521,6 +563,8 @@
     if (!file) return;
     const text = await file.text();
     const patch = await parsePatchText(text);
+    await saveDirtyEditorIfNeeded();
+    await assertPatchMatchesWorkspace(patch);
     await setPendingPatch(patch);
     updatePendingButton(patch);
     await renderReview(patch);
