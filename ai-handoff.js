@@ -165,8 +165,7 @@
   function extractJsonText(text) {
     const raw = String(text || "").trim();
     if (!raw) throw new Error("Patch file is empty.");
-    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    return (fenced ? fenced[1] : raw).trim();
+    return raw;
   }
 
   function normalizePatch(rawPayload) {
@@ -226,10 +225,36 @@
   }
 
   async function parsePatchText(text) {
+    const raw = extractJsonText(text);
     let parsed;
-    try { parsed = JSON.parse(extractJsonText(text)); }
-    catch (error) { throw new Error(`Patch JSON is invalid: ${error.message}`); }
-    return normalizePatch(parsed);
+
+    // Parse a normal JSON patch first. This is critical because file contents
+    // may legitimately contain Markdown fence markers.
+    try {
+      parsed = JSON.parse(raw);
+      return normalizePatch(parsed);
+    } catch (directError) {
+      // Optional fallback for a patch pasted inside one Markdown JSON fence.
+      // Build the fence marker dynamically so this source file does not itself
+      // contain the marker sequence and confuse older importers.
+      const fence = String.fromCharCode(96).repeat(3);
+      const first = raw.indexOf(fence);
+      if (first < 0) throw new Error(`Patch JSON is invalid: ${directError.message}`);
+
+      let contentStart = first + fence.length;
+      if (raw.slice(contentStart, contentStart + 4).toLowerCase() === "json") contentStart += 4;
+      while (/\s/.test(raw.charAt(contentStart))) contentStart += 1;
+
+      const last = raw.lastIndexOf(fence);
+      if (last <= contentStart) throw new Error(`Patch JSON is invalid: ${directError.message}`);
+
+      try {
+        parsed = JSON.parse(raw.slice(contentStart, last).trim());
+      } catch (fencedError) {
+        throw new Error(`Patch JSON is invalid: ${fencedError.message}`);
+      }
+      return normalizePatch(parsed);
+    }
   }
 
   function openPendingDb() {
