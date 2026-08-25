@@ -2079,16 +2079,6 @@ function expandFolderPath(path) {
     }
 }
 
-async function getAllWorkspaceFiles() {
-    const database = await getDatabase();
-    return await new Promise((resolve, reject) => {
-        const tx = database.transaction("files", "readonly");
-        const req = tx.objectStore("files").getAll();
-        req.onsuccess = () => resolve(req.result || []);
-        req.onerror = () => reject(req.error || new Error("Could not read workspace files."));
-    });
-}
-
 async function getAllWorkspaceFolders() {
     const database = await getDatabase();
     if (!database.objectStoreNames.contains("folders")) return [];

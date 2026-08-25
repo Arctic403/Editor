@@ -802,3 +802,74 @@ body.theme-monokai .gh-sync-card {
         margin-left: 10px;
     }
 }
+
+/* =========================================================
+   Local AI handoff — export workspace / review imported patch
+   ========================================================= */
+.ai-patch-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 14px;
+    background: rgba(0,0,0,.68);
+    backdrop-filter: blur(3px);
+}
+.ai-patch-overlay.hidden { display: none !important; }
+.ai-patch-dialog {
+    width: min(720px, 100%);
+    max-height: min(82dvh, 820px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid #3c4654;
+    border-radius: 14px;
+    background: #151922;
+    color: #f4f6f8;
+    box-shadow: 0 24px 80px rgba(0,0,0,.5);
+}
+.ai-patch-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid #313846;
+}
+.ai-patch-head > div { flex: 1; min-width: 0; }
+.ai-patch-head strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-patch-sub { margin-top: 3px; font-size: 12px; color: #9fa9b8; }
+.ai-patch-summary { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 14px 4px; }
+.ai-patch-chip { padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; background: #2b3240; }
+.ai-patch-chip.create { background: #153d2c; color: #a7f3d0; }
+.ai-patch-chip.modify { background: #17365e; color: #bfdbfe; }
+.ai-patch-chip.delete { background: #5a2229; color: #fecaca; }
+.ai-patch-chip.conflict { background: #6a4510; color: #fde68a; }
+.ai-patch-list {
+    flex: 1;
+    min-height: 120px;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px 14px 12px;
+}
+.ai-patch-row { padding: 10px; margin-bottom: 7px; border: 1px solid #343d4b; border-radius: 10px; background: #10141b; }
+.ai-patch-row.conflict { border-color: #9a6700; background: #241b0b; }
+.ai-patch-row-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ai-patch-row-top code { min-width: 0; overflow-wrap: anywhere; color: #e6edf3; }
+.ai-patch-status { flex: 0 0 auto; font-size: 10px; font-weight: 900; letter-spacing: .05em; color: #9cdcfe; }
+.ai-patch-reason, .ai-patch-conflict, .ai-patch-unverified { margin-top: 6px; font-size: 12px; line-height: 1.35; color: #aeb8c5; }
+.ai-patch-conflict { color: #ffd479; }
+.ai-patch-unverified { color: #d7b875; }
+.ai-patch-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; padding: 10px 14px; border-top: 1px solid #313846; }
+.ai-patch-note { padding: 0 14px 12px; font-size: 11px; line-height: 1.4; color: #9fa9b8; }
+body.theme-light .ai-patch-dialog { background: #fff; color: #1f2937; border-color: #d1d5db; }
+body.theme-light .ai-patch-head, body.theme-light .ai-patch-actions { border-color: #e5e7eb; }
+body.theme-light .ai-patch-row { background: #f8fafc; border-color: #d8dee8; }
+body.theme-light .ai-patch-row-top code { color: #1f2937; }
+body.theme-light .ai-patch-sub, body.theme-light .ai-patch-reason, body.theme-light .ai-patch-note { color: #667085; }
+@media (max-width: 700px) {
+    .ai-patch-overlay { align-items: flex-end; padding: 0; }
+    .ai-patch-dialog { width: 100%; max-height: 88dvh; border-radius: 14px 14px 0 0; padding-bottom: env(safe-area-inset-bottom); }
+    .ai-patch-actions > .btn { flex: 1 1 120px; }
+}

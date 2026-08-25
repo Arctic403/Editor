@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "node --check cloudflare-ai-worker/src/index.js && node --check codex-panel.js && node --check scripts/ai-bridge/apply-patch.mjs"
+    "check": "node --check app-safari-v11.js && node --check ide-v11.js && node --check ai-handoff.js"
   },
   "devDependencies": {
     "wrangler": "^4.36.0"
