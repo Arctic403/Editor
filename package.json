@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "node --check cloudflare-ai-worker/src/index.js && node --check codex-panel.js"
+    "check": "node --check cloudflare-ai-worker/src/index.js && node --check codex-panel.js && node --check scripts/ai-bridge/apply-patch.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.36.0"
