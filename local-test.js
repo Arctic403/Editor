@@ -7,7 +7,7 @@
 
   const TARGET_REPO = "Arctic403/RiftCityV1";
   const PREVIEW_PREFIX = "/__riftcity_local__/";
-  const CACHE_NAME = "riftcity-local-preview-v1";
+  const CACHE_NAME = "riftcity-local-preview-v2";
   const MAX_FILES = 6000;
   const MAX_BYTES = 120 * 1024 * 1024;
   const ESBUILD_URL = "https://cdn.jsdelivr.net/npm/esbuild-wasm@0.25.9/esm/browser.min.js";
@@ -174,7 +174,27 @@
   }
 
   function injectPreviewBanner(html) {
-    const script = `<script>window.__RIFTCITY_LOCAL_TEST__=true;<\/script>`;
+    const script = `<script>
+window.__RIFTCITY_LOCAL_TEST__=true;
+window.__RIFTCITY_LOCAL_TEST_PREFIX__=${JSON.stringify(PREVIEW_PREFIX)};
+document.addEventListener("click",function(event){
+  const anchor=event.target?.closest?.("a[href]");
+  if(!anchor||event.defaultPrevented||anchor.target)return;
+  try{
+    const url=new URL(anchor.href,location.href);
+    if(url.origin!==location.origin||url.pathname.startsWith(PREVIEW_PREFIX))return;
+    if(url.pathname==="/dev/block-editor"||url.pathname==="/dev/block-editor/"){
+      event.preventDefault();
+      location.href=PREVIEW_PREFIX+"dev/block-editor"+url.search+url.hash;
+      return;
+    }
+    if(url.pathname==="/"){
+      event.preventDefault();
+      location.href=PREVIEW_PREFIX+"index.html"+url.search+url.hash;
+    }
+  }catch(_){}
+},true);
+<\/script>`;
     const banner = `<style id="riftcity-local-test-badge">body:after{content:"LOCAL FRONTEND TEST";position:fixed;z-index:2147483647;right:8px;bottom:8px;padding:6px 9px;border-radius:8px;background:rgba(5,12,20,.82);color:#b9e6ff;border:1px solid rgba(125,211,252,.45);font:700 10px system-ui;letter-spacing:.08em;pointer-events:none}</style>`;
     if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>${script}${banner}`);
     return script + banner + html;
@@ -218,12 +238,27 @@
   async function ensureServiceWorker(log) {
     if (!("serviceWorker" in navigator)) throw new Error("This browser does not support Service Workers.");
     log("Starting local preview service worker…");
-    const reg = await navigator.serviceWorker.register("/local-test-sw.js?v=1", { scope: "/" });
+    const reg = await navigator.serviceWorker.register("/local-test-sw.js?v=2-block-editor", { scope: "/" });
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) {
       log("Service worker installed. Activating preview without reloading the Editor…");
     }
     return reg;
+  }
+
+  async function resetLocalEditorState(reg, log) {
+    const worker = reg?.active || navigator.serviceWorker.controller;
+    if (!worker) return;
+    const channel = new MessageChannel();
+    await new Promise((resolve) => {
+      const timeout = setTimeout(resolve, 1200);
+      channel.port1.onmessage = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+      worker.postMessage({ type: "RIFTCITY_LOCAL_RESET_EDITOR_STATE" }, [channel.port2]);
+    });
+    log("Local Block Editor mock D1 state reset for this build.");
   }
 
   function ensureModal() {
@@ -245,15 +280,22 @@
     overlay.innerHTML = `
       <section class="local-test-card">
         <div class="local-test-head"><div><h2>⚡ RiftCity Local Test</h2><p>Browser build + local preview. No GitHub. No Cloudflare deployment.</p></div><button id="localTestClose" class="local-test-close">×</button></div>
-        <div class="local-test-note"><b>Frontend-only safety mode.</b> This is for alley scenes, camera, movement, controls, React/CSS and static assets. Local Test supplies a fake developer session plus read-only bootstrap mocks so RiftCity can open the City without touching production D1/R2. Use ☁️ Full Test for real backend/auth/database behavior.</div>
+        <div class="local-test-note"><b>Frontend-only safety mode.</b> City/alley gameplay and the private Block Editor run entirely from the current browser workspace. The preview supplies a fake developer session plus browser-local draft/publish/history mocks. Nothing is written to production D1/R2 or GitHub. Rebuilding Local Test clears the mocked editor database; use ☁️ Full Test for real persistence/security verification.</div>
         <div id="localTestStatus" class="local-test-status">Ready.</div>
-        <div class="local-test-actions"><button id="localTestRun" class="local-test-run">BUILD & OPEN</button><button id="localTestOpen" class="local-test-open">OPEN LAST PREVIEW</button></div>
+        <div class="local-test-actions">
+          <button id="localTestRun" class="local-test-run">BUILD & OPEN GAME</button>
+          <button id="localTestRunEditor" class="local-test-run">BUILD & OPEN EDITOR</button>
+          <button id="localTestOpen" class="local-test-open">OPEN GAME</button>
+          <button id="localTestOpenEditor" class="local-test-open">OPEN BLOCK EDITOR</button>
+        </div>
       </section>`;
     document.body.appendChild(overlay);
     $("localTestClose").onclick = () => overlay.classList.add("hidden");
     overlay.addEventListener("click", e => { if (e.target === overlay) overlay.classList.add("hidden"); });
-    $("localTestRun").onclick = () => run().catch(error => setStatus("Local Test failed:\n" + (error.message || error)));
-    $("localTestOpen").onclick = openPreview;
+    $("localTestRun").onclick = () => run("city").catch(error => setStatus("Local Test failed:\n" + (error.message || error)));
+    $("localTestRunEditor").onclick = () => run("editor").catch(error => setStatus("Local Test failed:\n" + (error.message || error)));
+    $("localTestOpen").onclick = () => openPreview("city");
+    $("localTestOpenEditor").onclick = () => openPreview("editor");
   }
 
   function setStatus(text) {
@@ -261,17 +303,20 @@
     if (node) node.textContent = text;
   }
 
-  function openPreview() {
-    const url = location.origin + PREVIEW_PREFIX + "index.html#city";
-    window.open(url, "_blank");
+  function previewUrl(target = "city") {
+    return location.origin + PREVIEW_PREFIX + (target === "editor" ? "dev/block-editor" : "index.html#city");
   }
 
-  async function run() {
+  function openPreview(target = "city") {
+    window.open(previewUrl(target), "_blank");
+  }
+
+  async function run(target = "city") {
     ensureModal();
     if (repo() !== TARGET_REPO) throw new Error(`Select/pull ${TARGET_REPO} first. Current repo: ${repo() || "none"}.`);
 
-    const button = $("localTestRun");
-    button.disabled = true;
+    const buttons = [$("localTestRun"), $("localTestRunEditor")].filter(Boolean);
+    buttons.forEach(button => { button.disabled = true; });
     const lines = [];
     const log = line => {
       lines.push(line);
@@ -294,12 +339,13 @@
       }
 
       await populatePreviewCache(files, reactBundle, log);
-      await ensureServiceWorker(log);
+      const reg = await ensureServiceWorker(log);
+      await resetLocalEditorState(reg, log);
       log("Local frontend preview ready.");
-      log("Opening RiftCity…");
-      setTimeout(openPreview, 100);
+      log(target === "editor" ? "Opening private Block Editor…" : "Opening RiftCity…");
+      setTimeout(() => openPreview(target), 100);
     } finally {
-      button.disabled = false;
+      buttons.forEach(button => { button.disabled = false; });
     }
   }
 
@@ -314,7 +360,7 @@
   function bind() {
     ensureModal();
     $("localTestBtn")?.addEventListener("click", openModal);
-    window.RiftCityLocalTest = Object.freeze({ open: openModal, run, openPreview });
+    window.RiftCityLocalTest = Object.freeze({ open: openModal, run, openPreview, openEditor: () => openPreview("editor") });
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bind, { once: true });

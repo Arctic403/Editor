@@ -6,10 +6,20 @@
    - authoritative mutations stay blocked;
    - production Worker, D1 and R2 are never contacted by preview API requests.
 */
-const CACHE_NAME = "riftcity-local-preview-v1";
+const CACHE_NAME = "riftcity-local-preview-v2";
 const PREFIX = "/__riftcity_local__/";
+const EDITOR_STATE_CACHE = "riftcity-local-block-editor-state-v1";
 
 self.addEventListener("install", event => event.waitUntil(self.skipWaiting()));
+
+self.addEventListener("message", event => {
+  if (event.data?.type !== "RIFTCITY_LOCAL_RESET_EDITOR_STATE") return;
+  event.waitUntil((async () => {
+    await clearBlockEditorState();
+    try { event.ports?.[0]?.postMessage({ ok: true }); } catch (_) {}
+  })());
+});
+
 self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
 
 function json(data, status = 200) {
@@ -19,6 +29,258 @@ function json(data, status = 200) {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
       "X-RiftCity-Local-Test": "1"
+    }
+  });
+}
+
+function cloneJson(value) {
+  if (value == null) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function safeBlockId(value) {
+  const id = decodeURIComponent(String(value || ""));
+  if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(id)) throw new Error("Invalid local block id.");
+  return id;
+}
+
+function blockStateUrl(id) {
+  return self.location.origin + PREFIX + "__editor_state__/blocks/" + encodeURIComponent(id) + ".json";
+}
+
+function freshBlockState(id) {
+  return {
+    id,
+    draft: null,
+    published: null,
+    draftRevision: 0,
+    publishedRevision: 0,
+    history: []
+  };
+}
+
+async function loadBlockState(id) {
+  const cache = await caches.open(EDITOR_STATE_CACHE);
+  const response = await cache.match(blockStateUrl(id));
+  if (!response) return freshBlockState(id);
+  try {
+    return { ...freshBlockState(id), ...(await response.json()) };
+  } catch (_) {
+    return freshBlockState(id);
+  }
+}
+
+async function saveBlockState(state) {
+  const cache = await caches.open(EDITOR_STATE_CACHE);
+  await cache.put(
+    blockStateUrl(state.id),
+    new Response(JSON.stringify(state), {
+      headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }
+    })
+  );
+}
+
+async function clearBlockEditorState() {
+  await caches.delete(EDITOR_STATE_CACHE);
+}
+
+async function readJson(request) {
+  try { return await request.clone().json(); }
+  catch (_) { return null; }
+}
+
+async function mockBlockApi(request, path) {
+  const method = request.method.toUpperCase();
+
+  const publicMatch = path.match(/^\/api\/world\/blocks\/([^/]+)$/);
+  if (publicMatch && method === "GET") {
+    const id = safeBlockId(publicMatch[1]);
+    const state = await loadBlockState(id);
+    if (!state.published) {
+      return json({
+        ok: false,
+        error: "LOCAL_LAYOUT_FALLBACK",
+        message: "No browser-local published layout yet; using the current workspace source.",
+        localTest: true
+      }, 404);
+    }
+    return json({
+      ok: true,
+      block: cloneJson(state.published),
+      publishedRevision: state.publishedRevision,
+      localTest: true
+    });
+  }
+
+  const adminMatch = path.match(/^\/api\/admin\/blocks\/([^/]+)\/(editor|draft|publish|revert-draft|history|restore-revision)$/);
+  if (!adminMatch) return null;
+
+  const id = safeBlockId(adminMatch[1]);
+  const action = adminMatch[2];
+  const state = await loadBlockState(id);
+
+  if (action === "editor" && method === "GET") {
+    return json({
+      ok: true,
+      draft: cloneJson(state.draft),
+      published: cloneJson(state.published),
+      draftRevision: state.draftRevision,
+      publishedRevision: state.publishedRevision,
+      localTest: true
+    });
+  }
+
+  if (action === "draft" && method === "PUT") {
+    const body = await readJson(request);
+    if (!body?.block || typeof body.block !== "object" || Array.isArray(body.block)) {
+      return json({ ok: false, error: "LOCAL_INVALID_BLOCK", message: "Draft body must include a block object." }, 400);
+    }
+    state.draft = cloneJson(body.block);
+    state.draftRevision = Number(state.draftRevision || 0) + 1;
+    await saveBlockState(state);
+    return json({
+      ok: true,
+      draftRevision: state.draftRevision,
+      publishedRevision: state.publishedRevision,
+      block: cloneJson(state.draft),
+      localTest: true
+    });
+  }
+
+  if (action === "publish" && method === "POST") {
+    if (!state.draft) {
+      return json({ ok: false, error: "LOCAL_NO_DRAFT", message: "Save a Local Test draft before publishing." }, 409);
+    }
+    state.published = cloneJson(state.draft);
+    state.publishedRevision = Number(state.publishedRevision || 0) + 1;
+    state.draftRevision = Math.max(Number(state.draftRevision || 0), state.publishedRevision);
+    state.history.unshift({
+      revision: state.publishedRevision,
+      published_at: Date.now(),
+      block: cloneJson(state.published)
+    });
+    state.history = state.history.slice(0, 30);
+    await saveBlockState(state);
+    return json({
+      ok: true,
+      block: cloneJson(state.published),
+      publishedRevision: state.publishedRevision,
+      draftRevision: state.draftRevision,
+      localTest: true
+    });
+  }
+
+  if (action === "revert-draft" && method === "POST") {
+    state.draft = state.published ? cloneJson(state.published) : null;
+    state.draftRevision = Number(state.draftRevision || 0) + 1;
+    await saveBlockState(state);
+    return json({
+      ok: true,
+      block: cloneJson(state.draft),
+      draftRevision: state.draftRevision,
+      publishedRevision: state.publishedRevision,
+      revertedTo: state.published ? `local published r${state.publishedRevision}` : "workspace source fallback",
+      localTest: true
+    });
+  }
+
+  if (action === "history" && method === "GET") {
+    return json({
+      ok: true,
+      history: state.history.map(item => ({
+        revision: item.revision,
+        published_at: item.published_at
+      })),
+      localTest: true
+    });
+  }
+
+  if (action === "restore-revision" && method === "POST") {
+    const body = await readJson(request);
+    const revision = Number(body?.revision || 0);
+    const found = state.history.find(item => Number(item.revision) === revision);
+    if (!found) return json({ ok: false, error: "LOCAL_REVISION_NOT_FOUND" }, 404);
+    state.draft = cloneJson(found.block);
+    state.draftRevision = Number(state.draftRevision || 0) + 1;
+    await saveBlockState(state);
+    return json({
+      ok: true,
+      block: cloneJson(state.draft),
+      draftRevision: state.draftRevision,
+      publishedRevision: state.publishedRevision,
+      localTest: true
+    });
+  }
+
+  return json({
+    ok: false,
+    error: "LOCAL_METHOD_NOT_ALLOWED",
+    message: `Local Block Editor mock does not support ${method} ${path}.`
+  }, 405);
+}
+
+function localBlockEditorPage() {
+  return new Response(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+  <meta name="theme-color" content="#061014">
+  <meta name="robots" content="noindex,nofollow">
+  <title>RiftCity — Local Block Editor</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>body:after{content:"LOCAL BLOCK EDITOR";position:fixed;z-index:2147483647;right:8px;bottom:8px;padding:6px 9px;border-radius:8px;background:rgba(5,12,20,.84);color:#b9e6ff;border:1px solid rgba(125,211,252,.45);font:700 10px system-ui;letter-spacing:.08em;pointer-events:none}</style>
+  <script>
+  window.__RIFTCITY_LOCAL_TEST__=true;
+  window.__RIFTCITY_LOCAL_TEST_PREFIX__=${JSON.stringify(PREFIX)};
+  document.addEventListener("click",function(event){
+    const anchor=event.target&&event.target.closest&&event.target.closest("a[href]");
+    if(!anchor||event.defaultPrevented||anchor.target)return;
+    try{
+      const url=new URL(anchor.href,location.href);
+      if(url.origin!==location.origin||url.pathname.startsWith(${JSON.stringify(PREFIX)}))return;
+      if(url.pathname==="/"){
+        event.preventDefault();
+        location.href=${JSON.stringify(PREFIX)}+"index.html"+url.search+url.hash;
+      }else if(url.pathname==="/dev/block-editor"||url.pathname==="/dev/block-editor/"){
+        event.preventDefault();
+        location.href=${JSON.stringify(PREFIX)}+"dev/block-editor"+url.search+url.hash;
+      }
+    }catch(_){}
+  },true);
+  </script>
+</head>
+<body class="dev-block-editor-page">
+  <main id="dev-block-editor-root" aria-label="RiftCity Local Block Editor">
+    <div class="dev-editor-loading"><strong>BLOCK EDITOR</strong><span>Loading local workspace…</span></div>
+  </main>
+  <script type="module">
+import { renderBlockWorld, destroyBlockWorld } from '/views/block-world.js';
+const root=document.querySelector('#dev-block-editor-root');
+async function boot(){
+  const response=await fetch('/api/auth/me',{credentials:'same-origin',cache:'no-store'});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok||!['admin','developer'].includes(data&&data.user&&data.user.role)){
+    root.innerHTML='<section class="dev-editor-denied"><strong>Developer access required</strong><a href="/">Return to RiftCity</a></section>';
+    return;
+  }
+  document.documentElement.classList.add('dev-block-editor-document');
+  await renderBlockWorld(root,{editorWorkspace:true});
+}
+window.addEventListener('pagehide',()=>destroyBlockWorld(),{once:true});
+boot().catch(error=>{
+  console.error(error);
+  root.innerHTML='<section class="dev-editor-denied"><strong>Block Editor failed to start</strong><small style="display:block;margin-top:8px">'+String(error&&error.message||error)+'</small><a href="/">Return to RiftCity</a></section>';
+});
+  </script>
+</body>
+</html>`, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-RiftCity-Local-Test": "1",
+      "X-Robots-Tag": "noindex, nofollow"
     }
   });
 }
@@ -114,7 +376,7 @@ function blockedMutation(path) {
   }, 503);
 }
 
-function mockApi(request, url) {
+async function mockApi(request, url) {
   const method = request.method.toUpperCase();
   const path = url.pathname;
 
@@ -139,15 +401,8 @@ function mockApi(request, url) {
     return json(localWorld());
   }
 
-  // Return "no published server layout" so Block World deliberately falls back
-  // to the CURRENT LOCAL public/block1.js that we actually want to test.
-  if (method === "GET" && /^\/api\/world\/blocks\/[^/]+$/.test(path)) {
-    return json({
-      ok: false,
-      error: "LOCAL_LAYOUT_FALLBACK",
-      message: "No server-published block is used in Local Test; using local block source."
-    }, 404);
-  }
+  const blockResponse = await mockBlockApi(request, path);
+  if (blockResponse) return blockResponse;
 
   if (method === "GET" && path.startsWith("/api/services/")) {
     const service = decodeURIComponent(path.slice("/api/services/".length).split("/")[0] || "");
@@ -204,8 +459,24 @@ self.addEventListener("fetch", event => {
     // requests. Only same-origin RiftCity preview traffic is sandboxed here.
     if (url.origin !== self.location.origin) return fetch(event.request);
 
+    const prefixedEditor = PREFIX + "dev/block-editor";
+    const rootEditor = url.pathname === "/dev/block-editor" || url.pathname === "/dev/block-editor/";
+
+    // Keep the private developer route inside the preview prefix. Otherwise a
+    // normal absolute /dev/block-editor navigation would leave the sandbox URL
+    // and subsequent /api requests could escape Local Test interception.
+    if (fromPreview && event.request.mode === "navigate" && rootEditor && !directPreview) {
+      return Response.redirect(self.location.origin + prefixedEditor, 302);
+    }
+    if (directPreview && (url.pathname === prefixedEditor || url.pathname === prefixedEditor + "/")) {
+      return localBlockEditorPage();
+    }
+    if (fromPreview && event.request.mode === "navigate" && !directPreview && url.pathname === "/") {
+      return Response.redirect(self.location.origin + PREFIX + "index.html", 302);
+    }
+
     if (url.pathname.startsWith("/api/")) {
-      return mockApi(event.request, url);
+      return await mockApi(event.request, url);
     }
 
     const cached = await cachedPreview(url.pathname);

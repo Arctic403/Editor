@@ -82,3 +82,24 @@ the React island and then serving the current `public/` tree from the local work
 
 The preview lives under `/__riftcity_local__/`. `local-test-sw.js` only intercepts requests belonging
 to that preview and passes normal Editor requests through untouched.
+
+
+## Browser Local Test — private Block Editor support
+
+Local Test now supports the private RiftCity `/dev/block-editor` authoring workspace instead of
+falling back to the normal City SPA.
+
+- **BUILD & OPEN EDITOR** builds the current local RiftCity workspace and opens the private Block
+  Editor directly.
+- **OPEN BLOCK EDITOR** reopens the current Local Test editor without rebuilding.
+- The service worker serves a Local Test version of the server-gated Block Editor page and keeps
+  the preview URL under `/__riftcity_local__/`, so its API traffic cannot fall out of the sandbox.
+- The fake developer session remains local-only.
+- Block Editor draft, publish, revert, version-history and restore-revision endpoints are mocked in
+  browser Cache Storage for `downtown-commercial-01`, `alley-commerce-01`, and future block IDs.
+- Public block GETs return the browser-local published layout after a Local Test publish; before
+  that they intentionally fall back to the current workspace source.
+- Rebuilding Local Test clears the mocked block database so stale test layouts cannot override a
+  newly edited workspace.
+- Every non-editor authoritative mutation remains blocked. Real D1/R2/auth/security behavior still
+  requires **Full Test**.
