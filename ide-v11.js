@@ -3782,6 +3782,7 @@
 
         action("💾 Save", clickCore("saveLocalBtn"), true);
         action("☁️ Push", clickCore("pushGitHubBtn"), true);
+        action("🧪 Live Test", clickCore("liveTestBtn"), true);
         action("🔍 Find / Replace", () => toggleTemporaryBarV11("searchReplaceBar"));
         action("🔎 Find File", clickCore("quickOpenBtn"));
         action("⚓ Jump to Line", clickCore("jumpLineBtn"));

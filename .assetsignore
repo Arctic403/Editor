@@ -1,0 +1,40 @@
+# Cloudflare Worker static asset allowlist-by-exclusion.
+# The Editor still keeps its root layout for GitHub Pages; Wrangler must never
+# upload dependencies, Worker source, repository history, old builds, or config.
+**/node_modules
+**/.git
+**/.DS_Store
+.wrangler
+.dev.vars*
+.env*
+*.pem
+*.key
+*.p12
+*.pfx
+worker.js
+wrangler.toml
+package.json
+bun.lock
+bun.lockb
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+README.md
+LICENSE
+FOLDER_MANAGER_PATCH_V12.md
+.ai-handoff-proof.txt
+
+# Old/unused browser builds are intentionally not public Cloudflare assets.
+app.js
+app-safari-v2.js
+app-safari-v3.js
+app-safari-v4.js
+app-safari-v5.js
+app-safari-v6.js
+app-safari-v7.js
+app-safari-v8.js
+ide-v9.js
+ide-v9-audited.js
+ide-v9-mobile-ui-fixed.js
+ide-v9-tabs-fixed.js
+ide-v10-clean.js

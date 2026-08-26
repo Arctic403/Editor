@@ -1,7 +1,10 @@
 name = "editor"
-compatibility_date = "2026-08-24"
+main = "worker.js"
+compatibility_date = "2026-08-26"
 workers_dev = true
 
 [assets]
 directory = "."
+binding = "ASSETS"
+run_worker_first = true
 not_found_handling = "single-page-application"
