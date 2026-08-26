@@ -135,7 +135,7 @@
       rename_alias: true,
       target_repo: repo || null,
       target_branch: branch || null,
-      note: "Include target_repo, target_branch, and base_snapshot_sha256 from this export. Existing-file write/delete/move actions should include that file's base_sha256. New write actions use base_sha256:null. Move uses path as the source and new_path as the destination; optional content may modify the file while moving it."
+      note: "Include target_repo, target_branch, and base_snapshot_sha256 from this export. Existing-file write/delete/move actions should include that file's base_sha256. New write actions use base_sha256:null. If a new-write path closely resembles an existing workspace file, review requires an explicit redirect or Create New Anyway confirmation. Move uses path as the source and new_path as the destination; optional content may modify the file while moving it."
     };
   }
 
@@ -536,7 +536,7 @@
         conflictReason = "Workspace snapshot changed and this operation has no per-file base hash, so it cannot be verified safely.";
       }
 
-      if (!conflict && !exists && change.action === "write" && !hasBase && !change._review_confirmed_new) {
+      if (!conflict && !exists && change.action === "write" && (!hasBase || change.base_sha256 === null) && !change._review_confirmed_new) {
         const likely = findLikelyPath(change.path, paths);
         if (likely) {
           suggested = likely;
@@ -791,8 +791,23 @@
   async function useSuggestedPath(index, path) {
     const patch = await getPendingPatch();
     if (!patch?.changes?.[index]) return;
-    patch.changes[index].path = normalizePath(path);
-    delete patch.changes[index]._review_confirmed_new;
+    const correctedPath = normalizePath(path);
+    const change = patch.changes[index];
+    change.path = correctedPath;
+    delete change._review_confirmed_new;
+
+    // If a patch incorrectly described a likely existing file as a brand-new write
+    // (base_sha256:null), explicitly choosing the suggestion converts it into a
+    // verified modify against the file that is actually in the workspace.
+    if (change.action === "write" && change.base_sha256 === null && typeof getAllWorkspaceFiles === "function") {
+      const currentFiles = await getAllWorkspaceFiles();
+      const existing = currentFiles.find((file) => String(file?.name || "") === correctedPath);
+      if (existing) {
+        const content = typeof existing.content === "string" ? existing.content : String(existing.content ?? "");
+        change.base_sha256 = await sha256(content);
+      }
+    }
+
     const normalized = normalizePatch(patch);
     await setPendingPatch(normalized);
     updatePendingButton(normalized);
