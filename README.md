@@ -61,10 +61,13 @@ The Editor now has two separate RiftCity test paths:
   testing.
 
 Local Test is intentionally a **frontend test**. It is ideal for scene transitions, camera framing,
-movement, touch controls, React/editor UI, CSS and static assets. Calls to `/api/*` are answered with
-an explicit `LOCAL_FRONTEND_ONLY` response so a local browser run can never accidentally write to
-production D1/R2. Use Full Test when the change depends on server routes, authentication, D1, R2,
-crime outcomes or other authoritative backend behavior.
+movement, touch controls, React/editor UI, CSS and static assets. The preview service worker supplies
+a fake `developer` login plus minimal read-only bootstrap responses (`/api/auth/me`, player state,
+world bootstrap and empty effect/service state) so the normal RiftCity shell can open directly into
+the City. The published-block GET deliberately returns a local fallback response so Block World uses
+the current workspace's `public/block1.js` instead of pretending D1 exists. Authoritative mutations,
+R2-backed approved assets and unmocked backend routes remain blocked. Use Full Test when the change
+depends on real server routes, authentication, D1, R2, crime outcomes or other authoritative behavior.
 
 ### Browser build step
 

@@ -245,7 +245,7 @@
     overlay.innerHTML = `
       <section class="local-test-card">
         <div class="local-test-head"><div><h2>⚡ RiftCity Local Test</h2><p>Browser build + local preview. No GitHub. No Cloudflare deployment.</p></div><button id="localTestClose" class="local-test-close">×</button></div>
-        <div class="local-test-note"><b>Frontend-only safety mode.</b> This is for alley scenes, camera, movement, controls, React/CSS and static assets. API calls are blocked locally so this mode cannot write production D1/R2. Use ☁️ Full Test for backend/auth/database changes.</div>
+        <div class="local-test-note"><b>Frontend-only safety mode.</b> This is for alley scenes, camera, movement, controls, React/CSS and static assets. Local Test supplies a fake developer session plus read-only bootstrap mocks so RiftCity can open the City without touching production D1/R2. Use ☁️ Full Test for real backend/auth/database behavior.</div>
         <div id="localTestStatus" class="local-test-status">Ready.</div>
         <div class="local-test-actions"><button id="localTestRun" class="local-test-run">BUILD & OPEN</button><button id="localTestOpen" class="local-test-open">OPEN LAST PREVIEW</button></div>
       </section>`;
