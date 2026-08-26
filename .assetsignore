@@ -38,3 +38,5 @@ ide-v9-audited.js
 ide-v9-mobile-ui-fixed.js
 ide-v9-tabs-fixed.js
 ide-v10-clean.js
+
+# local-test.js and local-test-sw.js are intentional public Editor runtime assets.

@@ -48,3 +48,34 @@ The Cloudflare token needs account-scoped permissions sufficient to:
 
 The preview URL is `https://riftcity-live-test.<account-subdomain>.workers.dev/`.
 `STOP PREVIEW` deletes only the preview Worker; test D1/R2 are retained for later test deployments.
+
+
+## Browser Local Test
+
+The Editor now has two separate RiftCity test paths:
+
+- **⚡ Local Test** — builds the current local RiftCity browser workspace on-device and serves the
+  `public/` app through an Editor-owned service-worker sandbox. This does not contact GitHub and
+  does not create a Cloudflare Worker deployment.
+- **☁️ Full Test** — keeps the existing isolated Cloudflare preview Worker for real Worker/D1/R2/auth
+  testing.
+
+Local Test is intentionally a **frontend test**. It is ideal for scene transitions, camera framing,
+movement, touch controls, React/editor UI, CSS and static assets. Calls to `/api/*` are answered with
+an explicit `LOCAL_FRONTEND_ONLY` response so a local browser run can never accidentally write to
+production D1/R2. Use Full Test when the change depends on server routes, authentication, D1, R2,
+crime outcomes or other authoritative backend behavior.
+
+### Browser build step
+
+For RiftCity workspaces that contain `client/react/index.jsx`, Local Test runs `esbuild-wasm` in the
+browser and generates an in-memory `public/react-ui.js` before opening the preview. The build output
+is placed only in the Local Test cache; it does not alter the IndexedDB workspace unless you edit the
+file yourself.
+
+This is not a general Node.js/npm runtime. Safari cannot execute arbitrary native npm lifecycle
+scripts. Local Test implements the browser-safe part of RiftCity's current `npm run build`: bundling
+the React island and then serving the current `public/` tree from the local workspace.
+
+The preview lives under `/__riftcity_local__/`. `local-test-sw.js` only intercepts requests belonging
+to that preview and passes normal Editor requests through untouched.
