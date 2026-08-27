@@ -101,5 +101,11 @@ falling back to the normal City SPA.
   that they intentionally fall back to the current workspace source.
 - Rebuilding Local Test clears the mocked block database so stale test layouts cannot override a
   newly edited workspace.
+- **SAVE PUBLISHED CONFIG TO WORKSPACE** copies every locally published scene `runtimeConfig` into
+  `public/config/scene-runtime.json` in the current RiftCity IndexedDB workspace. This makes tuned
+  camera/player/movement/interaction values a source-controlled fallback without touching GitHub;
+  the normal **Push Changes** flow remains the only way to send that source file to the repo.
+- The source-config save preserves scene entries that were not published in the current Local Test
+  session and refuses to overwrite malformed/unsupported config JSON.
 - Every non-editor authoritative mutation remains blocked. Real D1/R2/auth/security behavior still
   requires **Full Test**.

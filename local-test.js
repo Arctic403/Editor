@@ -8,6 +8,8 @@
   const TARGET_REPO = "Arctic403/RiftCityV1";
   const PREVIEW_PREFIX = "/__riftcity_local__/";
   const CACHE_NAME = "riftcity-local-preview-v2";
+  const EDITOR_STATE_CACHE = "riftcity-local-block-editor-state-v2";
+  const SOURCE_SCENE_CONFIG_PATH = "public/config/scene-runtime.json";
   const MAX_FILES = 6000;
   const MAX_BYTES = 120 * 1024 * 1024;
   const ESBUILD_URL = "https://cdn.jsdelivr.net/npm/esbuild-wasm@0.25.9/esm/browser.min.js";
@@ -261,6 +263,118 @@ document.addEventListener("click",function(event){
     log("Local Block Editor scene-config state reset for this build.");
   }
 
+  function cloneJson(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
+  }
+
+  function sourceConfigUrlToSceneId(url) {
+    try {
+      const path = new URL(url, location.origin).pathname;
+      const prefix = PREVIEW_PREFIX + "__editor_state__/blocks/";
+      if (!path.startsWith(prefix) || !path.endsWith(".json")) return "";
+      return decodeURIComponent(path.slice(prefix.length, -5));
+    } catch (_) {
+      return "";
+    }
+  }
+
+  async function collectPublishedLocalSceneConfigs() {
+    const cache = await caches.open(EDITOR_STATE_CACHE);
+    const requests = await cache.keys();
+    const scenes = [];
+
+    for (const request of requests) {
+      const sceneId = sourceConfigUrlToSceneId(request.url);
+      if (!sceneId) continue;
+      const response = await cache.match(request);
+      if (!response) continue;
+      let state;
+      try { state = await response.json(); }
+      catch (_) { continue; }
+      const runtimeConfig = state?.published?.runtimeConfig;
+      if (!runtimeConfig || typeof runtimeConfig !== "object" || Array.isArray(runtimeConfig)) continue;
+      if (Number(runtimeConfig.schemaVersion ?? 1) !== 1) {
+        throw new Error(`Published Local Test config for ${sceneId} uses an unsupported schema version.`);
+      }
+      scenes.push({
+        id: String(state?.published?.id || sceneId),
+        runtimeConfig: cloneJson(runtimeConfig),
+        revision: Number(state?.publishedRevision || 0),
+        integrity: cloneJson(state?.integrity || null)
+      });
+    }
+
+    scenes.sort((a, b) => a.id.localeCompare(b.id));
+    return scenes;
+  }
+
+  async function currentWorkspaceFile(path) {
+    if (typeof getAllWorkspaceFiles !== "function") throw new Error("Workspace read API is unavailable.");
+    const files = await getAllWorkspaceFiles();
+    return files.find(file => normalizePath(file?.name || "") === path) || null;
+  }
+
+  function parseSceneSourceConfig(text) {
+    if (!String(text || "").trim()) return { schemaVersion: 1, scenes: {} };
+    let parsed;
+    try { parsed = JSON.parse(text); }
+    catch (error) { throw new Error(`${SOURCE_SCENE_CONFIG_PATH} is not valid JSON: ${error.message}`); }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`${SOURCE_SCENE_CONFIG_PATH} must contain one JSON object.`);
+    }
+    if (parsed.schemaVersion != null && Number(parsed.schemaVersion) !== 1) {
+      throw new Error(`${SOURCE_SCENE_CONFIG_PATH} uses an unsupported schemaVersion.`);
+    }
+    if (parsed.scenes != null && (typeof parsed.scenes !== "object" || Array.isArray(parsed.scenes))) {
+      throw new Error(`${SOURCE_SCENE_CONFIG_PATH} scenes must be an object.`);
+    }
+    return { ...parsed, schemaVersion: 1, scenes: { ...(parsed.scenes || {}) } };
+  }
+
+  async function savePublishedConfigToWorkspace() {
+    if (repo() !== TARGET_REPO) {
+      throw new Error(`Select/pull ${TARGET_REPO} first. Current repo: ${repo() || "none"}.`);
+    }
+    if (typeof saveFileToDb !== "function") throw new Error("Workspace write API is unavailable.");
+
+    await saveDirtyEditor();
+    const publishedScenes = await collectPublishedLocalSceneConfigs();
+    if (!publishedScenes.length) {
+      throw new Error("No Local Test scene has a published runtime config yet. Publish the scene in the Local Block Editor first.");
+    }
+
+    const existing = await currentWorkspaceFile(SOURCE_SCENE_CONFIG_PATH);
+    const sourceConfig = parseSceneSourceConfig(existing?.content || "");
+    for (const scene of publishedScenes) {
+      const previous = sourceConfig.scenes[scene.id];
+      sourceConfig.scenes[scene.id] = {
+        ...(previous && typeof previous === "object" && !Array.isArray(previous) ? previous : {}),
+        runtimeConfig: cloneJson(scene.runtimeConfig)
+      };
+    }
+
+    const sortedScenes = {};
+    for (const sceneId of Object.keys(sourceConfig.scenes).sort()) sortedScenes[sceneId] = sourceConfig.scenes[sceneId];
+    sourceConfig.scenes = sortedScenes;
+    const nextText = JSON.stringify(sourceConfig, null, 2) + "\n";
+    const oldText = typeof existing?.content === "string" ? existing.content : String(existing?.content ?? "");
+    if (oldText === nextText) {
+      return { changed: false, path: SOURCE_SCENE_CONFIG_PATH, scenes: publishedScenes };
+    }
+
+    if (typeof ensureFolderPath === "function") await ensureFolderPath("public/config");
+    await saveFileToDb(SOURCE_SCENE_CONFIG_PATH, nextText);
+    const editor = $("editor");
+    if (editor?.dataset?.filename === SOURCE_SCENE_CONFIG_PATH) {
+      editor.value = nextText;
+      if (typeof updateDirtyIndicator === "function") updateDirtyIndicator(false);
+    }
+    if (typeof loadFiles === "function") await loadFiles();
+    if (typeof scheduleGitSyncStatusUpdate === "function") scheduleGitSyncStatusUpdate();
+
+    return { changed: true, path: SOURCE_SCENE_CONFIG_PATH, scenes: publishedScenes };
+  }
+
   function ensureModal() {
     if ($("localTestModal")) return;
     const style = document.createElement("style");
@@ -271,7 +385,7 @@ document.addEventListener("click",function(event){
       .local-test-close{width:38px;height:38px;border:1px solid #435064;border-radius:9px;background:#192331;color:white}.local-test-note{margin:12px 0;padding:10px;border:1px solid #37516d;border-radius:10px;background:#0c2132;font-size:12px;line-height:1.45}
       .local-test-status{min-height:92px;padding:10px;border:1px solid #2d3847;border-radius:10px;background:#090d13;white-space:pre-wrap;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
       .local-test-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.local-test-actions button{flex:1 1 145px;border:0;border-radius:10px;padding:11px 12px;font-weight:800}
-      .local-test-run{background:#22c55e;color:#07150b}.local-test-open{background:#2d78ff;color:white}
+      .local-test-run{background:#22c55e;color:#07150b}.local-test-open{background:#2d78ff;color:white}.local-test-save-config{background:#d99a2b;color:#171006;flex-basis:100%!important}
     `;
     document.head.appendChild(style);
     const overlay = document.createElement("div");
@@ -280,13 +394,14 @@ document.addEventListener("click",function(event){
     overlay.innerHTML = `
       <section class="local-test-card">
         <div class="local-test-head"><div><h2>⚡ RiftCity Local Test</h2><p>Browser build + local preview. No GitHub. No Cloudflare deployment.</p></div><button id="localTestClose" class="local-test-close">×</button></div>
-        <div class="local-test-note"><b>Frontend-only safety mode.</b> City/alley gameplay and the private Block Editor run entirely from the current browser workspace. The preview supplies a fake developer session plus browser-local draft/publish/history mocks, including the current scene runtimeConfig. Local publish mirrors the Worker schema checks and stores a local SHA-256 integrity envelope, but never pretends to perform production D1/HMAC signing. Nothing is written to production D1/R2 or GitHub. Rebuilding Local Test clears the mocked editor database; use ☁️ Full Test for real persistence/security verification.</div>
+        <div class="local-test-note"><b>Frontend-only safety mode.</b> City/alley gameplay and the private Block Editor run entirely from the current browser workspace. The preview supplies a fake developer session plus browser-local draft/publish/history mocks, including the current scene runtimeConfig. Local publish mirrors the Worker schema checks and stores a local SHA-256 integrity envelope, but never pretends to perform production D1/HMAC signing. <b>SAVE PUBLISHED CONFIG TO WORKSPACE</b> is the only Local Test action here that writes source data: it copies locally published scene runtimeConfig values into <code>public/config/scene-runtime.json</code> in the current RiftCity browser workspace. GitHub is still untouched until you use the normal Push Changes flow. Rebuilding Local Test clears only the mocked publish database, not source files.</div>
         <div id="localTestStatus" class="local-test-status">Ready.</div>
         <div class="local-test-actions">
           <button id="localTestRun" class="local-test-run">BUILD & OPEN GAME</button>
           <button id="localTestRunEditor" class="local-test-run">BUILD & OPEN EDITOR</button>
           <button id="localTestOpen" class="local-test-open">OPEN GAME</button>
           <button id="localTestOpenEditor" class="local-test-open">OPEN BLOCK EDITOR</button>
+          <button id="localTestSaveConfig" class="local-test-save-config">SAVE PUBLISHED CONFIG TO WORKSPACE</button>
         </div>
       </section>`;
     document.body.appendChild(overlay);
@@ -296,6 +411,24 @@ document.addEventListener("click",function(event){
     $("localTestRunEditor").onclick = () => run("editor").catch(error => setStatus("Local Test failed:\n" + (error.message || error)));
     $("localTestOpen").onclick = () => openPreview("city");
     $("localTestOpenEditor").onclick = () => openPreview("editor");
+    $("localTestSaveConfig").onclick = async () => {
+      const button = $("localTestSaveConfig");
+      const oldText = button.textContent;
+      button.disabled = true;
+      button.textContent = "SAVING CONFIG…";
+      try {
+        const result = await savePublishedConfigToWorkspace();
+        const names = result.scenes.map(scene => `${scene.id} (local r${scene.revision || 0})`).join(", ");
+        setStatus(result.changed
+          ? `Saved ${result.scenes.length} published scene config(s) to ${result.path}.\n${names}\n\nThis changed only the local RiftCity workspace. Use Push Changes when you want it in GitHub.`
+          : `Source config is already current in ${result.path}.\n${names}`);
+      } catch (error) {
+        setStatus("Save config failed:\n" + (error.message || error));
+      } finally {
+        button.disabled = false;
+        button.textContent = oldText;
+      }
+    };
   }
 
   function setStatus(text) {
@@ -360,7 +493,13 @@ document.addEventListener("click",function(event){
   function bind() {
     ensureModal();
     $("localTestBtn")?.addEventListener("click", openModal);
-    window.RiftCityLocalTest = Object.freeze({ open: openModal, run, openPreview, openEditor: () => openPreview("editor") });
+    window.RiftCityLocalTest = Object.freeze({
+      open: openModal,
+      run,
+      openPreview,
+      openEditor: () => openPreview("editor"),
+      savePublishedConfigToWorkspace
+    });
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bind, { once: true });
