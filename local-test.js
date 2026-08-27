@@ -12,9 +12,6 @@
   const SOURCE_SCENE_CONFIG_PATH = "public/config/scene-runtime.json";
   const MAX_FILES = 6000;
   const MAX_BYTES = 120 * 1024 * 1024;
-  const ESBUILD_URL = "https://cdn.jsdelivr.net/npm/esbuild-wasm@0.25.9/esm/browser.min.js";
-  const ESBUILD_WASM = "https://cdn.jsdelivr.net/npm/esbuild-wasm@0.25.9/esbuild.wasm";
-  let esbuildPromise = null;
 
   const $ = id => document.getElementById(id);
 
@@ -67,94 +64,6 @@
     return map;
   }
 
-  async function loadEsbuild() {
-    if (esbuildPromise) return esbuildPromise;
-    esbuildPromise = (async () => {
-      const esbuild = await import(ESBUILD_URL);
-      try {
-        await esbuild.initialize({ wasmURL: ESBUILD_WASM, worker: true });
-      } catch (error) {
-        // initialize throws if a previous Editor preview already initialized this module.
-        if (!/initialize/i.test(String(error?.message || ""))) throw error;
-      }
-      return esbuild;
-    })();
-    return esbuildPromise;
-  }
-
-  function resolveVirtual(importer, request, files) {
-    if (!request.startsWith(".")) return "";
-    const base = importer ? importer.split("/").slice(0, -1).join("/") : "";
-    const raw = normalizePath((base ? base + "/" : "") + request);
-    const candidates = [
-      raw, `${raw}.js`, `${raw}.jsx`, `${raw}.mjs`, `${raw}.json`,
-      `${raw}/index.js`, `${raw}/index.jsx`
-    ];
-    return candidates.find(path => files.has(path)) || "";
-  }
-
-  async function buildReactUi(files, log) {
-    const entry = "client/react/index.jsx";
-    if (!files.has(entry)) {
-      log("React entry not present; using existing public/react-ui.js if available.");
-      return null;
-    }
-
-    log("Browser build: bundling client/react/index.jsx…");
-    const esbuild = await loadEsbuild();
-
-    const plugin = {
-      name: "riftcity-local-workspace",
-      setup(build) {
-        build.onResolve({ filter: /^react$/ }, () => ({ path: "react", namespace: "pkg" }));
-        build.onResolve({ filter: /^react-dom$/ }, () => ({ path: "react-dom", namespace: "pkg" }));
-        build.onResolve({ filter: /^react-dom\/client$/ }, () => ({ path: "react-dom-client", namespace: "pkg" }));
-        build.onResolve({ filter: /^https?:\/\// }, args => ({ path: args.path, external: true }));
-        build.onResolve({ filter: /.*/ }, args => {
-          if (args.namespace === "pkg") return null;
-          if (!args.importer && files.has(normalizePath(args.path))) {
-            return { path: normalizePath(args.path), namespace: "ws" };
-          }
-          const resolved = resolveVirtual(args.importer, args.path, files);
-          if (resolved) return { path: resolved, namespace: "ws" };
-          return null;
-        });
-        build.onLoad({ filter: /.*/, namespace: "pkg" }, args => {
-          if (args.path === "react") {
-            return { contents: 'export * from "https://esm.sh/react@19.1.1"; import d from "https://esm.sh/react@19.1.1"; export default d;', loader: "js" };
-          }
-          if (args.path === "react-dom-client") {
-            return { contents: 'export * from "https://esm.sh/react-dom@19.1.1/client";', loader: "js" };
-          }
-          return { contents: 'export * from "https://esm.sh/react-dom@19.1.1"; import d from "https://esm.sh/react-dom@19.1.1"; export default d;', loader: "js" };
-        });
-        build.onLoad({ filter: /.*/, namespace: "ws" }, args => {
-          const source = files.get(args.path);
-          const ext = args.path.split(".").pop().toLowerCase();
-          const loader = ({ jsx: "jsx", js: "js", mjs: "js", json: "json", css: "css" })[ext] || "text";
-          return { contents: source, loader, resolveDir: args.path.split("/").slice(0, -1).join("/") };
-        });
-      }
-    };
-
-    const result = await esbuild.build({
-      entryPoints: [entry],
-      bundle: true,
-      write: false,
-      format: "esm",
-      platform: "browser",
-      target: ["safari16"],
-      jsx: "transform",
-      sourcemap: "inline",
-      plugins: [plugin],
-      logLevel: "silent"
-    });
-    const js = result.outputFiles?.find(file => file.path.endsWith(".js")) || result.outputFiles?.[0];
-    if (!js) throw new Error("Browser build produced no React JavaScript.");
-    log(`Browser build complete (${Math.round(js.text.length / 1024)} KiB).`);
-    return js.text;
-  }
-
   function dataUrlResponse(content, path) {
     const match = String(content).match(/^data:([^;,]+)?;base64,([\s\S]+)$/i);
     if (!match) return null;
@@ -202,7 +111,7 @@ document.addEventListener("click",function(event){
     return script + banner + html;
   }
 
-  async function populatePreviewCache(files, reactBundle, log) {
+  async function populatePreviewCache(files, log) {
     const publicFiles = [...files.entries()].filter(([path]) => path === "public" || path.startsWith("public/"));
     if (!files.has("public/index.html")) throw new Error("RiftCity public/index.html is missing.");
 
@@ -219,20 +128,12 @@ document.addEventListener("click",function(event){
       if (!response) {
         let text = content;
         if (rel === "index.html") text = injectPreviewBanner(text);
-        if (rel === "react-ui.js" && reactBundle) text = reactBundle;
         response = new Response(text, { headers: { "Content-Type": mimeFor(rel), "Cache-Control": "no-store" } });
       }
       await cache.put(new Request(location.origin + PREVIEW_PREFIX + rel), response);
       count++;
     }
 
-    if (reactBundle && !files.has("public/react-ui.js")) {
-      await cache.put(
-        new Request(location.origin + PREVIEW_PREFIX + "react-ui.js"),
-        new Response(reactBundle, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } })
-      );
-      count++;
-    }
 
     log(`Prepared ${count} public asset(s) in the browser preview cache.`);
   }
@@ -260,7 +161,7 @@ document.addEventListener("click",function(event){
       };
       worker.postMessage({ type: "RIFTCITY_LOCAL_RESET_EDITOR_STATE" }, [channel.port2]);
     });
-    log("Local Block Editor scene-config state reset for this build.");
+    log("Local Block Editor scene-config state reset for this preview.");
   }
 
   function cloneJson(value) {
@@ -393,12 +294,12 @@ document.addEventListener("click",function(event){
     overlay.className = "local-test-overlay hidden";
     overlay.innerHTML = `
       <section class="local-test-card">
-        <div class="local-test-head"><div><h2>⚡ RiftCity Local Test</h2><p>Browser build + local preview. No GitHub. No Cloudflare deployment.</p></div><button id="localTestClose" class="local-test-close">×</button></div>
+        <div class="local-test-head"><div><h2>⚡ RiftCity Local Test</h2><p>Pure-JavaScript local preview. No GitHub. No Cloudflare deployment.</p></div><button id="localTestClose" class="local-test-close">×</button></div>
         <div class="local-test-note"><b>Frontend-only safety mode.</b> City/alley gameplay and the private Block Editor run entirely from the current browser workspace. The preview supplies a fake developer session plus browser-local draft/publish/history mocks, including the current scene runtimeConfig. Local publish mirrors the Worker schema checks and stores a local SHA-256 integrity envelope, but never pretends to perform production D1/HMAC signing. <b>SAVE PUBLISHED CONFIG TO WORKSPACE</b> is the only Local Test action here that writes source data: it copies locally published scene runtimeConfig values into <code>public/config/scene-runtime.json</code> in the current RiftCity browser workspace. GitHub is still untouched until you use the normal Push Changes flow. Rebuilding Local Test clears only the mocked publish database, not source files.</div>
         <div id="localTestStatus" class="local-test-status">Ready.</div>
         <div class="local-test-actions">
-          <button id="localTestRun" class="local-test-run">BUILD & OPEN GAME</button>
-          <button id="localTestRunEditor" class="local-test-run">BUILD & OPEN EDITOR</button>
+          <button id="localTestRun" class="local-test-run">PREPARE & OPEN GAME</button>
+          <button id="localTestRunEditor" class="local-test-run">PREPARE & OPEN EDITOR</button>
           <button id="localTestOpen" class="local-test-open">OPEN GAME</button>
           <button id="localTestOpenEditor" class="local-test-open">OPEN BLOCK EDITOR</button>
           <button id="localTestSaveConfig" class="local-test-save-config">SAVE PUBLISHED CONFIG TO WORKSPACE</button>
@@ -462,16 +363,8 @@ document.addEventListener("click",function(event){
       const files = await collectWorkspace();
       log(`Loaded ${files.size} workspace file(s).`);
 
-      let reactBundle = null;
-      try {
-        reactBundle = await buildReactUi(files, log);
-      } catch (error) {
-        if (!files.has("public/react-ui.js")) throw error;
-        log("React browser build failed; falling back to existing public/react-ui.js.");
-        log("Build warning: " + (error.message || error));
-      }
-
-      await populatePreviewCache(files, reactBundle, log);
+      log("Pure-JS Local Test: serving RiftCity public/ directly (no framework compile step).");
+      await populatePreviewCache(files, log);
       const reg = await ensureServiceWorker(log);
       await resetLocalEditorState(reg, log);
       log("Local frontend preview ready.");
@@ -485,7 +378,7 @@ document.addEventListener("click",function(event){
   function openModal() {
     ensureModal();
     setStatus(repo() === TARGET_REPO
-      ? `Ready for ${repo()} (${branch() || "local"}).\nBUILD & OPEN uses the current local workspace.`
+      ? `Ready for ${repo()} (${branch() || "local"}).\nPREPARE & OPEN uses the current local workspace.`
       : `Select/pull ${TARGET_REPO} first.\nCurrent repo: ${repo() || "none"}.`);
     $("localTestModal").classList.remove("hidden");
   }

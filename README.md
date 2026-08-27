@@ -54,31 +54,32 @@ The preview URL is `https://riftcity-live-test.<account-subdomain>.workers.dev/`
 
 The Editor now has two separate RiftCity test paths:
 
-- **⚡ Local Test** — builds the current local RiftCity browser workspace on-device and serves the
+- **⚡ Local Test** — prepares the current local RiftCity browser workspace on-device and serves the
   `public/` app through an Editor-owned service-worker sandbox. This does not contact GitHub and
   does not create a Cloudflare Worker deployment.
 - **☁️ Full Test** — keeps the existing isolated Cloudflare preview Worker for real Worker/D1/R2/auth
   testing.
 
 Local Test is intentionally a **frontend test**. It is ideal for scene transitions, camera framing,
-movement, touch controls, React/editor UI, CSS and static assets. The preview service worker supplies
-a fake `developer` login plus minimal read-only bootstrap responses (`/api/auth/me`, player state,
-world bootstrap and empty effect/service state) so the normal RiftCity shell can open directly into
-the City. The published-block GET deliberately returns a local fallback response so Block World uses
-the current workspace's `public/block1.js` instead of pretending D1 exists. Authoritative mutations,
-R2-backed approved assets and unmocked backend routes remain blocked. Use Full Test when the change
-depends on real server routes, authentication, D1, R2, crime outcomes or other authoritative behavior.
+movement, touch controls, the pure-JavaScript Block Editor UI, CSS and static assets. The preview
+service worker supplies a fake `developer` login plus minimal read-only bootstrap responses
+(`/api/auth/me`, player state, world bootstrap and empty effect/service state) so the normal
+RiftCity shell can open directly into the City. The published-block GET deliberately returns a local
+fallback response so Block World uses the current workspace's `public/block1.js` instead of
+pretending D1 exists. Authoritative mutations, R2-backed approved assets and unmocked backend routes
+remain blocked. Use Full Test when the change depends on real server routes, authentication, D1, R2,
+crime outcomes or other authoritative behavior.
 
-### Browser build step
+### Pure-JavaScript preview step
 
-For RiftCity workspaces that contain `client/react/index.jsx`, Local Test runs `esbuild-wasm` in the
-browser and generates an in-memory `public/react-ui.js` before opening the preview. The build output
-is placed only in the Local Test cache; it does not alter the IndexedDB workspace unless you edit the
-file yourself.
+RiftCity Local Test no longer compiles a framework bundle in the browser. The current `public/` tree
+is copied directly into the Local Test cache and served as native browser JavaScript/modules. This
+removes the old client-framework compatibility build, generated UI bundle, and its
+RiftCity-specific browser-bundler download.
 
-This is not a general Node.js/npm runtime. Safari cannot execute arbitrary native npm lifecycle
-scripts. Local Test implements the browser-safe part of RiftCity's current `npm run build`: bundling
-the React island and then serving the current `public/` tree from the local workspace.
+This remains a browser frontend sandbox rather than a general Node.js/npm runtime. Safari does not
+run arbitrary native npm lifecycle scripts here; RiftCity's pure-JavaScript frontend is served
+directly from the current IndexedDB workspace.
 
 The preview lives under `/__riftcity_local__/`. `local-test-sw.js` only intercepts requests belonging
 to that preview and passes normal Editor requests through untouched.
@@ -89,7 +90,7 @@ to that preview and passes normal Editor requests through untouched.
 Local Test now supports the private RiftCity `/dev/block-editor` authoring workspace instead of
 falling back to the normal City SPA.
 
-- **BUILD & OPEN EDITOR** builds the current local RiftCity workspace and opens the private Block
+- **PREPARE & OPEN EDITOR** builds the current local RiftCity workspace and opens the private Block
   Editor directly.
 - **OPEN BLOCK EDITOR** reopens the current Local Test editor without rebuilding.
 - The service worker serves a Local Test version of the server-gated Block Editor page and keeps
