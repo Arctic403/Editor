@@ -238,7 +238,7 @@ document.addEventListener("click",function(event){
   async function ensureServiceWorker(log) {
     if (!("serviceWorker" in navigator)) throw new Error("This browser does not support Service Workers.");
     log("Starting local preview service worker…");
-    const reg = await navigator.serviceWorker.register("/local-test-sw.js?v=2-block-editor", { scope: "/" });
+    const reg = await navigator.serviceWorker.register("/local-test-sw.js?v=3-scene-config", { scope: "/" });
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) {
       log("Service worker installed. Activating preview without reloading the Editor…");
@@ -258,7 +258,7 @@ document.addEventListener("click",function(event){
       };
       worker.postMessage({ type: "RIFTCITY_LOCAL_RESET_EDITOR_STATE" }, [channel.port2]);
     });
-    log("Local Block Editor mock D1 state reset for this build.");
+    log("Local Block Editor scene-config state reset for this build.");
   }
 
   function ensureModal() {
@@ -280,7 +280,7 @@ document.addEventListener("click",function(event){
     overlay.innerHTML = `
       <section class="local-test-card">
         <div class="local-test-head"><div><h2>⚡ RiftCity Local Test</h2><p>Browser build + local preview. No GitHub. No Cloudflare deployment.</p></div><button id="localTestClose" class="local-test-close">×</button></div>
-        <div class="local-test-note"><b>Frontend-only safety mode.</b> City/alley gameplay and the private Block Editor run entirely from the current browser workspace. The preview supplies a fake developer session plus browser-local draft/publish/history mocks. Nothing is written to production D1/R2 or GitHub. Rebuilding Local Test clears the mocked editor database; use ☁️ Full Test for real persistence/security verification.</div>
+        <div class="local-test-note"><b>Frontend-only safety mode.</b> City/alley gameplay and the private Block Editor run entirely from the current browser workspace. The preview supplies a fake developer session plus browser-local draft/publish/history mocks, including the current scene runtimeConfig. Local publish mirrors the Worker schema checks and stores a local SHA-256 integrity envelope, but never pretends to perform production D1/HMAC signing. Nothing is written to production D1/R2 or GitHub. Rebuilding Local Test clears the mocked editor database; use ☁️ Full Test for real persistence/security verification.</div>
         <div id="localTestStatus" class="local-test-status">Ready.</div>
         <div class="local-test-actions">
           <button id="localTestRun" class="local-test-run">BUILD & OPEN GAME</button>

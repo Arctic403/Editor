@@ -8,7 +8,7 @@
 */
 const CACHE_NAME = "riftcity-local-preview-v2";
 const PREFIX = "/__riftcity_local__/";
-const EDITOR_STATE_CACHE = "riftcity-local-block-editor-state-v1";
+const EDITOR_STATE_CACHE = "riftcity-local-block-editor-state-v2";
 
 self.addEventListener("install", event => event.waitUntil(self.skipWaiting()));
 
@@ -55,6 +55,8 @@ function freshBlockState(id) {
     published: null,
     draftRevision: 0,
     publishedRevision: 0,
+    publishedAt: null,
+    integrity: null,
     history: []
   };
 }
@@ -81,12 +83,112 @@ async function saveBlockState(state) {
 }
 
 async function clearBlockEditorState() {
-  await caches.delete(EDITOR_STATE_CACHE);
+  await Promise.all([
+    caches.delete(EDITOR_STATE_CACHE),
+    caches.delete("riftcity-local-block-editor-state-v1")
+  ]);
 }
 
 async function readJson(request) {
   try { return await request.clone().json(); }
   catch (_) { return null; }
+}
+
+const LOCAL_RUNTIME_CONFIG_LIMITS = Object.freeze({
+  camera: Object.freeze({
+    playScale: [.05, 3], zoom: [.05, 3], minScale: [.05, 3], maxScale: [.05, 3],
+    anchorX: [0, 1], anchorY: [0, 1], lookAhead: [0, 1200],
+    positionEase: [.01, 1], zoomEase: [.01, 1]
+  }),
+  player: Object.freeze({
+    baseScale: [.30, 4], editorScale: [.30, 4], depthMin: [.20, 3], depthMax: [.20, 3],
+    visualOffsetX: [-500, 500], visualOffsetY: [-500, 500], shadowScale: [.20, 4]
+  }),
+  movement: Object.freeze({ walkSpeed: [40, 800], runSpeed: [60, 1200], maxStep: [2, 24] }),
+  interaction: Object.freeze({ radius: [20, 500], roomExitRadius: [20, 500] })
+});
+
+function knownKeysOnly(value, allowed, label) {
+  if (value == null) return "";
+  if (typeof value !== "object" || Array.isArray(value)) return `${label} must be an object.`;
+  const unknown = Object.keys(value).find(key => !allowed.has(key));
+  return unknown ? `${label} contains unsupported field ${unknown}.` : "";
+}
+
+function finiteInRange(value, min, max) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max;
+}
+
+function validateRuntimeConfig(config) {
+  if (config == null) return "";
+  if (typeof config !== "object" || Array.isArray(config)) return "runtimeConfig must be an object.";
+  let error = knownKeysOnly(config, new Set(["schemaVersion", "camera", "player", "movement", "interaction"]), "runtimeConfig");
+  if (error) return error;
+  if (config.schemaVersion != null && Number(config.schemaVersion) !== 1) return "Unsupported runtimeConfig schemaVersion.";
+
+  if (config.camera != null) {
+    const allowed = new Set(["mode", "playScale", "zoom", "minScale", "maxScale", "anchorX", "anchorY", "lookAhead", "vertical", "positionEase", "zoomEase"]);
+    error = knownKeysOnly(config.camera, allowed, "runtimeConfig.camera");
+    if (error) return error;
+    if (config.camera.mode != null && !["follow", "contain", "cover", "room"].includes(String(config.camera.mode))) return "Invalid runtimeConfig.camera mode.";
+    if (config.camera.vertical != null && !["follow", "ground"].includes(String(config.camera.vertical))) return "Invalid runtimeConfig.camera vertical mode.";
+    for (const [key, range] of Object.entries(LOCAL_RUNTIME_CONFIG_LIMITS.camera)) {
+      if (config.camera[key] != null && !finiteInRange(config.camera[key], range[0], range[1])) return `Invalid runtimeConfig.camera ${key}.`;
+    }
+    if (config.camera.minScale != null && config.camera.maxScale != null && Number(config.camera.minScale) > Number(config.camera.maxScale)) return "runtimeConfig.camera minScale cannot exceed maxScale.";
+  }
+
+  if (config.player != null) {
+    error = knownKeysOnly(config.player, new Set(["baseScale", "editorScale", "depthMin", "depthMax", "visualOffsetX", "visualOffsetY", "shadowScale"]), "runtimeConfig.player");
+    if (error) return error;
+    for (const [key, range] of Object.entries(LOCAL_RUNTIME_CONFIG_LIMITS.player)) {
+      if (config.player[key] != null && !finiteInRange(config.player[key], range[0], range[1])) return `Invalid runtimeConfig.player ${key}.`;
+    }
+    if (config.player.depthMin != null && config.player.depthMax != null && Number(config.player.depthMin) > Number(config.player.depthMax)) return "runtimeConfig.player depthMin cannot exceed depthMax.";
+  }
+
+  if (config.movement != null) {
+    error = knownKeysOnly(config.movement, new Set(["walkSpeed", "runSpeed", "maxStep"]), "runtimeConfig.movement");
+    if (error) return error;
+    for (const [key, range] of Object.entries(LOCAL_RUNTIME_CONFIG_LIMITS.movement)) {
+      if (config.movement[key] != null && !finiteInRange(config.movement[key], range[0], range[1])) return `Invalid runtimeConfig.movement ${key}.`;
+    }
+    if (config.movement.walkSpeed != null && config.movement.runSpeed != null && Number(config.movement.runSpeed) < Number(config.movement.walkSpeed)) return "runtimeConfig.movement runSpeed cannot be lower than walkSpeed.";
+  }
+
+  if (config.interaction != null) {
+    error = knownKeysOnly(config.interaction, new Set(["radius", "roomExitRadius"]), "runtimeConfig.interaction");
+    if (error) return error;
+    for (const [key, range] of Object.entries(LOCAL_RUNTIME_CONFIG_LIMITS.interaction)) {
+      if (config.interaction[key] != null && !finiteInRange(config.interaction[key], range[0], range[1])) return `Invalid runtimeConfig.interaction ${key}.`;
+    }
+  }
+  return "";
+}
+
+function validateLocalBlock(block, expectedId) {
+  if (!block || typeof block !== "object" || Array.isArray(block)) return "Draft body must include a block object.";
+  if (String(block.id || "") !== String(expectedId || "")) return "Block id does not match the Local Test route.";
+  return validateRuntimeConfig(block.runtimeConfig);
+}
+
+function bytesToHex(bytes) {
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function localIntegrity(block, revision, signedAt = Date.now()) {
+  const canonical = JSON.stringify(block);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return {
+    verified: true,
+    revision: Number(revision || 0),
+    sha256: bytesToHex(new Uint8Array(digest)),
+    signature: null,
+    algorithm: "local-sha256-v1",
+    signedAt,
+    localTest: true
+  };
 }
 
 async function mockBlockApi(request, path) {
@@ -98,16 +200,28 @@ async function mockBlockApi(request, path) {
     const state = await loadBlockState(id);
     if (!state.published) {
       return json({
-        ok: false,
-        error: "LOCAL_LAYOUT_FALLBACK",
+        ok: true,
+        blockId: id,
+        published: false,
+        revision: 0,
+        publishedAt: null,
+        block: null,
+        integrity: null,
         message: "No browser-local published layout yet; using the current workspace source.",
         localTest: true
-      }, 404);
+      });
     }
+    const integrity = state.integrity || await localIntegrity(state.published, state.publishedRevision, state.publishedAt || Date.now());
+    if (!state.integrity) { state.integrity = integrity; await saveBlockState(state); }
     return json({
       ok: true,
-      block: cloneJson(state.published),
+      blockId: id,
+      published: true,
+      revision: state.publishedRevision,
       publishedRevision: state.publishedRevision,
+      publishedAt: state.publishedAt || null,
+      block: cloneJson(state.published),
+      integrity: cloneJson(integrity),
       localTest: true
     });
   }
@@ -126,22 +240,27 @@ async function mockBlockApi(request, path) {
       published: cloneJson(state.published),
       draftRevision: state.draftRevision,
       publishedRevision: state.publishedRevision,
+      publishedAt: state.publishedAt || null,
+      integrity: cloneJson(state.integrity),
       localTest: true
     });
   }
 
   if (action === "draft" && method === "PUT") {
     const body = await readJson(request);
-    if (!body?.block || typeof body.block !== "object" || Array.isArray(body.block)) {
-      return json({ ok: false, error: "LOCAL_INVALID_BLOCK", message: "Draft body must include a block object." }, 400);
+    const validationError = validateLocalBlock(body?.block, id);
+    if (validationError) {
+      return json({ ok: false, error: "LOCAL_INVALID_BLOCK", message: validationError }, 400);
     }
     state.draft = cloneJson(body.block);
     state.draftRevision = Number(state.draftRevision || 0) + 1;
     await saveBlockState(state);
     return json({
       ok: true,
+      blockId: id,
       draftRevision: state.draftRevision,
       publishedRevision: state.publishedRevision,
+      savedAt: Date.now(),
       block: cloneJson(state.draft),
       localTest: true
     });
@@ -151,21 +270,29 @@ async function mockBlockApi(request, path) {
     if (!state.draft) {
       return json({ ok: false, error: "LOCAL_NO_DRAFT", message: "Save a Local Test draft before publishing." }, 409);
     }
+    const validationError = validateLocalBlock(state.draft, id);
+    if (validationError) return json({ ok: false, error: "LOCAL_INVALID_BLOCK", message: validationError }, 400);
     state.published = cloneJson(state.draft);
     state.publishedRevision = Number(state.publishedRevision || 0) + 1;
     state.draftRevision = Math.max(Number(state.draftRevision || 0), state.publishedRevision);
+    state.publishedAt = Date.now();
+    state.integrity = await localIntegrity(state.published, state.publishedRevision, state.publishedAt);
     state.history.unshift({
       revision: state.publishedRevision,
-      published_at: Date.now(),
-      block: cloneJson(state.published)
+      published_at: state.publishedAt,
+      block: cloneJson(state.published),
+      integrity: cloneJson(state.integrity)
     });
     state.history = state.history.slice(0, 30);
     await saveBlockState(state);
     return json({
       ok: true,
+      blockId: id,
       block: cloneJson(state.published),
       publishedRevision: state.publishedRevision,
+      publishedAt: state.publishedAt,
       draftRevision: state.draftRevision,
+      integrity: cloneJson(state.integrity),
       localTest: true
     });
   }
@@ -189,7 +316,9 @@ async function mockBlockApi(request, path) {
       ok: true,
       history: state.history.map(item => ({
         revision: item.revision,
-        published_at: item.published_at
+        published_at: item.published_at,
+        integrity_algorithm: item.integrity?.algorithm || null,
+        integrity_sha256: item.integrity?.sha256 || null
       })),
       localTest: true
     });
@@ -205,9 +334,12 @@ async function mockBlockApi(request, path) {
     await saveBlockState(state);
     return json({
       ok: true,
+      blockId: id,
+      restoredRevision: revision,
       block: cloneJson(state.draft),
       draftRevision: state.draftRevision,
       publishedRevision: state.publishedRevision,
+      integrity: cloneJson(found.integrity || null),
       localTest: true
     });
   }
