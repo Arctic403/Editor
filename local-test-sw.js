@@ -360,7 +360,7 @@ function localBlockEditorPage() {
   <meta name="theme-color" content="#061014">
   <meta name="robots" content="noindex,nofollow">
   <title>RiftCity — Local Block Editor</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="${PREFIX}styles.css">
   <style>body:after{content:"LOCAL BLOCK EDITOR";position:fixed;z-index:2147483647;right:8px;bottom:8px;padding:6px 9px;border-radius:8px;background:rgba(5,12,20,.84);color:#b9e6ff;border:1px solid rgba(125,211,252,.45);font:700 10px system-ui;letter-spacing:.08em;pointer-events:none}</style>
   <script>
   window.__RIFTCITY_LOCAL_TEST__=true;
@@ -387,7 +387,7 @@ function localBlockEditorPage() {
     <div class="dev-editor-loading"><strong>BLOCK EDITOR</strong><span>Loading local workspace…</span></div>
   </main>
   <script type="module">
-import { renderBlockWorld, destroyBlockWorld } from '/views/block-world.js';
+import { renderDeveloperBlockEditor, destroyBlockWorld } from '${PREFIX}editor/block-editor-entry.js';
 const root=document.querySelector('#dev-block-editor-root');
 async function boot(){
   const response=await fetch('/api/auth/me',{credentials:'same-origin',cache:'no-store'});
@@ -397,7 +397,7 @@ async function boot(){
     return;
   }
   document.documentElement.classList.add('dev-block-editor-document');
-  await renderBlockWorld(root,{editorWorkspace:true});
+  await renderDeveloperBlockEditor(root);
 }
 window.addEventListener('pagehide',()=>destroyBlockWorld(),{once:true});
 boot().catch(error=>{

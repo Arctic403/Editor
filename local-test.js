@@ -141,7 +141,7 @@ document.addEventListener("click",function(event){
   async function ensureServiceWorker(log) {
     if (!("serviceWorker" in navigator)) throw new Error("This browser does not support Service Workers.");
     log("Starting local preview service worker…");
-    const reg = await navigator.serviceWorker.register("/local-test-sw.js?v=3-scene-config", { scope: "/" });
+    const reg = await navigator.serviceWorker.register("/local-test-sw.js?v=4-ios-editor-entry", { scope: "/" });
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) {
       log("Service worker installed. Activating preview without reloading the Editor…");
@@ -362,6 +362,9 @@ document.addEventListener("click",function(event){
       log("Reading current IndexedDB files…");
       const files = await collectWorkspace();
       log(`Loaded ${files.size} workspace file(s).`);
+      if (target === "editor" && !files.has("public/editor/block-editor-entry.js")) {
+        throw new Error("RiftCity pure-JavaScript Block Editor entry is missing: public/editor/block-editor-entry.js. Apply the current RiftCity editor patch, then prepare Local Test again.");
+      }
 
       log("Pure-JS Local Test: serving RiftCity public/ directly (no framework compile step).");
       await populatePreviewCache(files, log);

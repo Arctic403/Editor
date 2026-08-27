@@ -95,6 +95,11 @@ falling back to the normal City SPA.
 - **OPEN BLOCK EDITOR** reopens the current Local Test editor without rebuilding.
 - The service worker serves a Local Test version of the server-gated Block Editor page and keeps
   the preview URL under `/__riftcity_local__/`, so its API traffic cannot fall out of the sandbox.
+- The Local Block Editor imports RiftCity's dedicated pure-JavaScript
+  `/__riftcity_local__/editor/block-editor-entry.js` entry directly from the preview namespace.
+  Its static module graph therefore stays inside the Local Test service-worker route on Safari
+  and iOS Home Screen/standalone web apps instead of relying on client inference for root-relative
+  editor module requests.
 - The fake developer session remains local-only.
 - Block Editor draft, publish, revert, version-history and restore-revision endpoints are mocked in
   browser Cache Storage for `downtown-commercial-01`, `alley-commerce-01`, and future block IDs.
