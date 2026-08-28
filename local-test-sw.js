@@ -7,17 +7,54 @@
    - production Worker, D1 and R2 are never contacted by preview API requests.
 */
 const CACHE_NAME = "riftcity-local-preview-v2";
-const PREFIX = "/__riftcity_local__/";
+const SINGLE_CACHE_NAME = "riftcity-single-player-preview-v1";
+const SINGLE_STATE_CACHE = "riftcity-single-player-state-v1";
+const BASE_PATH = (() => {
+  const path = new URL(self.registration.scope).pathname;
+  return path.endsWith("/") ? path : path + "/";
+})();
+const PREFIX = BASE_PATH + "__riftcity_local__/";
+const SINGLE_PREFIX = BASE_PATH + "__riftcity_single__/";
 const EDITOR_STATE_CACHE = "riftcity-local-block-editor-state-v2";
 
 self.addEventListener("install", event => event.waitUntil(self.skipWaiting()));
 
 self.addEventListener("message", event => {
-  if (event.data?.type !== "RIFTCITY_LOCAL_RESET_EDITOR_STATE") return;
-  event.waitUntil((async () => {
-    await clearBlockEditorState();
-    try { event.ports?.[0]?.postMessage({ ok: true }); } catch (_) {}
-  })());
+  const type = event.data?.type;
+  const port = event.ports?.[0];
+  if (type === "RIFTCITY_LOCAL_RESET_EDITOR_STATE") {
+    event.waitUntil((async () => {
+      await clearBlockEditorState();
+      try { port?.postMessage({ ok: true }); } catch (_) {}
+    })());
+    return;
+  }
+  if (type === "RIFTCITY_SINGLE_RESET_STATE") {
+    event.waitUntil((async () => {
+      await caches.delete(SINGLE_STATE_CACHE);
+      const state = await loadSingleState();
+      try { port?.postMessage({ ok: true, state }); } catch (_) {}
+    })());
+    return;
+  }
+  if (type === "RIFTCITY_SINGLE_EXPORT_STATE") {
+    event.waitUntil((async () => {
+      const state = await loadSingleState();
+      try { port?.postMessage({ ok: true, state }); } catch (_) {}
+    })());
+    return;
+  }
+  if (type === "RIFTCITY_SINGLE_IMPORT_STATE") {
+    event.waitUntil((async () => {
+      try {
+        const state = normalizeImportedSingleState(event.data?.payload);
+        await saveSingleState(state);
+        port?.postMessage({ ok: true, state });
+      } catch (error) {
+        try { port?.postMessage({ ok: false, error: String(error?.message || error) }); } catch (_) {}
+      }
+    })());
+  }
 });
 
 self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
@@ -561,6 +598,216 @@ async function mockApi(request, url) {
   }, 503);
 }
 
+
+function freshSingleState() {
+  const player = {
+    ...localPlayer(),
+    id: "single-player",
+    userId: "single-player-user",
+    username: "SinglePlayer"
+  };
+  return {
+    schemaVersion: 1,
+    player,
+    world: {
+      current: localLocation(),
+      locations: []
+    },
+    app: {},
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+}
+
+function singleStateUrl() {
+  return self.location.origin + SINGLE_PREFIX + "__single_state__/save.json";
+}
+
+function normalizeImportedSingleState(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Single-player save must be one JSON object.");
+  if (input.schemaVersion != null && Number(input.schemaVersion) !== 1) throw new Error("Unsupported single-player save schemaVersion.");
+  const jsonText = JSON.stringify(input);
+  if (jsonText.length > 2_000_000) throw new Error("Single-player save exceeds the 2 MB browser-sandbox limit.");
+  const state = cloneJson(input);
+  state.schemaVersion = 1;
+  state.player = state.player && typeof state.player === "object" && !Array.isArray(state.player)
+    ? { ...freshSingleState().player, ...state.player, id: "single-player", userId: "single-player-user", username: "SinglePlayer" }
+    : freshSingleState().player;
+  state.world = state.world && typeof state.world === "object" && !Array.isArray(state.world)
+    ? state.world
+    : freshSingleState().world;
+  state.app = state.app && typeof state.app === "object" && !Array.isArray(state.app) ? state.app : {};
+  state.createdAt = Number(state.createdAt || Date.now());
+  state.updatedAt = Date.now();
+  return state;
+}
+
+async function loadSingleState() {
+  const cache = await caches.open(SINGLE_STATE_CACHE);
+  const response = await cache.match(singleStateUrl());
+  if (!response) {
+    const state = freshSingleState();
+    await saveSingleState(state);
+    return state;
+  }
+  try {
+    return normalizeImportedSingleState(await response.json());
+  } catch (_) {
+    const state = freshSingleState();
+    await saveSingleState(state);
+    return state;
+  }
+}
+
+async function saveSingleState(input) {
+  const state = normalizeImportedSingleState(input);
+  const cache = await caches.open(SINGLE_STATE_CACHE);
+  await cache.put(singleStateUrl(), new Response(JSON.stringify(state), {
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }
+  }));
+  return state;
+}
+
+function mergePlainObject(base, patch) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return base;
+  const out = { ...(base || {}) };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value && typeof value === "object" && !Array.isArray(value) && out[key] && typeof out[key] === "object" && !Array.isArray(out[key])) {
+      out[key] = mergePlainObject(out[key], value);
+    } else {
+      out[key] = cloneJson(value);
+    }
+  }
+  return out;
+}
+
+function singleUser() {
+  return {
+    id: "single-player-user",
+    username: "SinglePlayer",
+    role: "player",
+    isAdmin: false,
+    isDeveloper: false
+  };
+}
+
+async function mockSingleApi(request, url) {
+  const method = request.method.toUpperCase();
+  const path = url.pathname;
+
+  if (path === "/api/single-player/state" && method === "GET") {
+    return json({ ok: true, state: await loadSingleState(), singlePlayer: true });
+  }
+  if (path === "/api/single-player/state" && (method === "PUT" || method === "PATCH")) {
+    const body = await readJson(request);
+    const current = await loadSingleState();
+    const incoming = method === "PATCH" ? mergePlainObject(current, body?.patch || {}) : body?.state;
+    if (!incoming) return json({ ok: false, error: "SINGLE_PLAYER_INVALID_STATE" }, 400);
+    const state = await saveSingleState(incoming);
+    return json({ ok: true, state, singlePlayer: true });
+  }
+  if (path === "/api/single-player/state/reset" && method === "POST") {
+    await caches.delete(SINGLE_STATE_CACHE);
+    return json({ ok: true, state: await loadSingleState(), singlePlayer: true });
+  }
+
+  const state = await loadSingleState();
+
+  if (method === "GET" && path === "/api/auth/me") {
+    return json({
+      ok: true,
+      authenticated: true,
+      user: singleUser(),
+      player: cloneJson(state.player),
+      location: cloneJson(state.world?.current || localLocation()),
+      singlePlayer: true
+    });
+  }
+
+  if (method === "GET" && (path === "/api/player" || path === "/api/player/state")) {
+    return json({ ok: true, player: cloneJson(state.player), singlePlayer: true });
+  }
+
+  if (method === "GET" && path === "/api/world") {
+    return json({
+      ok: true,
+      current: cloneJson(state.world?.current || localLocation()),
+      locations: cloneJson(state.world?.locations || []),
+      singlePlayer: true
+    });
+  }
+
+  // Static world source stays authoritative in Single Player. Returning no
+  // browser-published block forces RiftCity to use its checked-in JSON/JS fallback.
+  const publicBlock = path.match(/^\/api\/world\/blocks\/([^/]+)$/);
+  if (method === "GET" && publicBlock) {
+    const id = safeBlockId(publicBlock[1]);
+    return json({
+      ok: true,
+      blockId: id,
+      published: false,
+      revision: 0,
+      block: null,
+      integrity: null,
+      message: "Single Player uses the current source-controlled world fallback.",
+      singlePlayer: true
+    });
+  }
+
+  if (method === "GET" && path === "/api/services") {
+    return json({ ok: true, services: [], singlePlayer: true });
+  }
+
+  if (method === "GET" && path.startsWith("/api/services/")) {
+    const service = decodeURIComponent(path.slice("/api/services/".length).split("/")[0] || "");
+    return json({ ...emptyService(service), singlePlayer: true, localTest: false });
+  }
+
+  if (method === "GET" && path === "/api/items") return json({ ok: true, items: [], singlePlayer: true });
+  if (method === "GET" && path === "/api/inventory") return json({ ok: true, items: [], inventory: [], singlePlayer: true });
+  if (method === "GET" && path === "/api/crimes") return json({ ok: true, crimes: [], history: [], singlePlayer: true });
+
+  if (method === "GET" && path.startsWith("/api/assets/")) {
+    return json({
+      ok: false,
+      error: "SINGLE_PLAYER_SERVER_ASSET_UNAVAILABLE",
+      message: "R2-backed assets are unavailable in static Single Player. Source-controlled public assets still work."
+    }, 404);
+  }
+
+  // Sign-in screens should never trap the static build, but Single Player does
+  // not create accounts or credentials.
+  if (method === "POST" && (path === "/api/auth/login" || path === "/api/auth/register")) {
+    return json({
+      ok: true,
+      authenticated: true,
+      user: singleUser(),
+      player: cloneJson(state.player),
+      singlePlayer: true
+    });
+  }
+
+  return json({
+    ok: false,
+    error: "SINGLE_PLAYER_ROUTE_NOT_SIMULATED",
+    message: `Static Single Player does not simulate ${method} ${path}. World rendering/editor JSON remain available; use Full Test for authoritative MMO systems.`
+  }, 503);
+}
+
+async function previewMode(event) {
+  if (!event.clientId) return "";
+  const client = await self.clients.get(event.clientId);
+  if (!client) return "";
+  try {
+    const pathname = new URL(client.url).pathname;
+    if (pathname.startsWith(SINGLE_PREFIX)) return "single";
+    if (pathname.startsWith(PREFIX)) return "local";
+    return "";
+  } catch (_) {
+    return "";
+  }
+}
+
 async function previewClient(event) {
   if (!event.clientId) return false;
   const client = await self.clients.get(event.clientId);
@@ -569,21 +816,24 @@ async function previewClient(event) {
   catch (_) { return false; }
 }
 
-async function cachedPreview(pathname) {
-  const cache = await caches.open(CACHE_NAME);
-  let rel = pathname.startsWith(PREFIX) ? pathname.slice(PREFIX.length) : pathname.replace(/^\/+/, "");
+async function cachedPreview(pathname, mode = "local") {
+  const prefix = mode === "single" ? SINGLE_PREFIX : PREFIX;
+  const cache = await caches.open(mode === "single" ? SINGLE_CACHE_NAME : CACHE_NAME);
+  let rel = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : pathname.replace(/^\/+/, "");
   if (!rel || rel.endsWith("/")) rel += "index.html";
-  const url = self.location.origin + PREFIX + rel;
+  const url = self.location.origin + prefix + rel;
   let response = await cache.match(url);
-  if (!response && !rel.includes(".")) response = await cache.match(self.location.origin + PREFIX + "index.html");
+  if (!response && !rel.includes(".")) response = await cache.match(self.location.origin + prefix + "index.html");
   return response;
 }
 
 self.addEventListener("fetch", event => {
   event.respondWith((async () => {
     const url = new URL(event.request.url);
-    const directPreview = url.origin === self.location.origin && url.pathname.startsWith(PREFIX);
-    const fromPreview = directPreview || await previewClient(event);
+    const directSingle = url.origin === self.location.origin && url.pathname.startsWith(SINGLE_PREFIX);
+    const directLocal = url.origin === self.location.origin && url.pathname.startsWith(PREFIX);
+    let mode = directSingle ? "single" : directLocal ? "local" : await previewMode(event);
+    const fromPreview = Boolean(mode);
 
     if (!fromPreview) return fetch(event.request);
 
@@ -591,30 +841,35 @@ self.addEventListener("fetch", event => {
     // requests. Only same-origin RiftCity preview traffic is sandboxed here.
     if (url.origin !== self.location.origin) return fetch(event.request);
 
-    const prefixedEditor = PREFIX + "dev/block-editor";
-    const rootEditor = url.pathname === "/dev/block-editor" || url.pathname === "/dev/block-editor/";
+    const activePrefix = mode === "single" ? SINGLE_PREFIX : PREFIX;
+    const directPreview = mode === "single" ? directSingle : directLocal;
 
-    // Keep the private developer route inside the preview prefix. Otherwise a
-    // normal absolute /dev/block-editor navigation would leave the sandbox URL
-    // and subsequent /api requests could escape Local Test interception.
-    if (fromPreview && event.request.mode === "navigate" && rootEditor && !directPreview) {
-      return Response.redirect(self.location.origin + prefixedEditor, 302);
+    if (mode === "local") {
+      const prefixedEditor = PREFIX + "dev/block-editor";
+      const rootEditor = url.pathname === "/dev/block-editor" || url.pathname === "/dev/block-editor/";
+
+      if (event.request.mode === "navigate" && rootEditor && !directPreview) {
+        return Response.redirect(self.location.origin + prefixedEditor, 302);
+      }
+      if (directPreview && (url.pathname === prefixedEditor || url.pathname === prefixedEditor + "/")) {
+        return localBlockEditorPage();
+      }
     }
-    if (directPreview && (url.pathname === prefixedEditor || url.pathname === prefixedEditor + "/")) {
-      return localBlockEditorPage();
-    }
-    if (fromPreview && event.request.mode === "navigate" && !directPreview && url.pathname === "/") {
-      return Response.redirect(self.location.origin + PREFIX + "index.html", 302);
+
+    if (event.request.mode === "navigate" && !directPreview && url.pathname === "/") {
+      return Response.redirect(self.location.origin + activePrefix + "index.html", 302);
     }
 
     if (url.pathname.startsWith("/api/")) {
-      return await mockApi(event.request, url);
+      return mode === "single"
+        ? await mockSingleApi(event.request, url)
+        : await mockApi(event.request, url);
     }
 
-    const cached = await cachedPreview(url.pathname);
+    const cached = await cachedPreview(url.pathname, mode);
     if (cached) return cached;
 
-    return new Response("Local Test asset not found: " + url.pathname, {
+    return new Response(`${mode === "single" ? "Single Player" : "Local Test"} asset not found: ${url.pathname}`, {
       status: 404,
       headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }
     });

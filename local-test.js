@@ -6,7 +6,11 @@
   "use strict";
 
   const TARGET_REPO = "Arctic403/RiftCityV1";
-  const PREVIEW_PREFIX = "/__riftcity_local__/";
+  const EDITOR_BASE_PATH = (() => {
+    const path = new URL("./", location.href).pathname;
+    return path.endsWith("/") ? path : path + "/";
+  })();
+  const PREVIEW_PREFIX = EDITOR_BASE_PATH + "__riftcity_local__/";
   const CACHE_NAME = "riftcity-local-preview-v2";
   const EDITOR_STATE_CACHE = "riftcity-local-block-editor-state-v2";
   const SOURCE_SCENE_CONFIG_PATH = "public/config/scene-runtime.json";
@@ -141,7 +145,8 @@ document.addEventListener("click",function(event){
   async function ensureServiceWorker(log) {
     if (!("serviceWorker" in navigator)) throw new Error("This browser does not support Service Workers.");
     log("Starting local preview service worker…");
-    const reg = await navigator.serviceWorker.register("/local-test-sw.js?v=4-ios-editor-entry", { scope: "/" });
+    const workerUrl = new URL("local-test-sw.js?v=5-pages-single-player", location.href);
+    const reg = await navigator.serviceWorker.register(workerUrl.href, { scope: EDITOR_BASE_PATH });
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) {
       log("Service worker installed. Activating preview without reloading the Editor…");

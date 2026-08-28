@@ -115,3 +115,28 @@ falling back to the normal City SPA.
   session and refuses to overwrite malformed/unsupported config JSON.
 - Every non-editor authoritative mutation remains blocked. Real D1/R2/auth/security behavior still
   requires **Full Test**.
+
+
+## Static Single Player — GitHub Pages / browser-only world sandbox
+
+The Editor now has a third RiftCity test path:
+
+- **🎮 Single Player** — runs the current local `Arctic403/RiftCityV1` `public/` tree as a static browser game with a persistent, device-local JSON save. It does not deploy a Worker and does not call production Cloudflare, D1 or R2.
+- **⚡ Local Test** — remains the disposable frontend/editor QA sandbox. Rebuilding it resets its mocked Block Editor state.
+- **☁️ Full Test** — remains the isolated Cloudflare preview for real Worker/D1/R2/auth behavior.
+
+Single Player is deliberately world/source-first. Current workspace JSON/JavaScript/assets are the authoritative world input; the service worker returns no browser-published block override, so the Rift runtime falls back to checked-in world source. Re-running **PREPARE & PLAY** refreshes the static game files without deleting the single-player save.
+
+The static page receives:
+
+- `window.__RIFTCITY_SINGLE_PLAYER__ === true`
+- `window.RiftCitySinglePlayer.load()`
+- `window.RiftCitySinglePlayer.save(state)`
+- `window.RiftCitySinglePlayer.patch(partialState)`
+- `window.RiftCitySinglePlayer.reset()`
+
+Those calls use a namespaced browser-only `/api/single-player/state` adapter handled by the Editor service worker. Save JSON can also be exported/imported from the Editor UI.
+
+Single Player intentionally does **not** fake the authoritative MMO backend. Unsupported account/economy/gameplay mutations return an explicit static-mode error so a frontend test cannot be mistaken for production behavior. Source-controlled world rendering, camera/movement code and other frontend systems can run without Cloudflare.
+
+The Local Test and Single Player service-worker registration now derives its scope from the Editor's actual page path, so project-site hosting such as `/Editor/` works instead of assuming the Editor is mounted at `/`.
