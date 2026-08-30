@@ -2,9 +2,19 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="theme-color" content="#11141a">
+    <meta name="color-scheme" content="dark light">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Mobile Workspace">
     <title>Mobile Workspace Editor</title>
+    <link rel="manifest" href="manifest.webmanifest?v=1">
+    <link rel="apple-touch-icon" sizes="180x180" href="pwa-icon-180.png?v=1">
     <link rel="stylesheet" href="style.css?v=20260820-folder-v12-1-mobile-cutoff">
+    <link rel="stylesheet" href="pwa-ios.css?v=1">
     <!-- JSZip for Exporting Workspace -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <!-- Prism.js for Syntax Highlighting -->
@@ -177,6 +187,7 @@
         </div>
     </div>
 
+    <script src="pwa-ios.js?v=1"></script>
     <script src="app-safari-v11.js?v=12-folder-core"></script>
     <script src="ide-v11.js?v=12-folder-shell"></script>
     <script src="ai-handoff.js?v=2-patch-review-fuzzy-new-1"></script>

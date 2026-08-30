@@ -1,0 +1,95 @@
+/*
+ * iOS / Home Screen shell.
+ * Deliberately isolated from the Editor's functional CSS so GitHub sync,
+ * Local Test, Single Player, Full Test and AI handoff behavior are untouched.
+ */
+:root {
+    --mw-app-height: 100vh;
+    --mw-safe-top: env(safe-area-inset-top, 0px);
+    --mw-safe-right: env(safe-area-inset-right, 0px);
+    --mw-safe-bottom: env(safe-area-inset-bottom, 0px);
+    --mw-safe-left: env(safe-area-inset-left, 0px);
+}
+
+@supports (height: 100dvh) {
+    :root {
+        --mw-app-height: 100dvh;
+    }
+}
+
+html.mw-standalone,
+html.mw-standalone body {
+    min-height: 100%;
+    overscroll-behavior: none;
+    background: #11141a;
+}
+
+html.mw-standalone body {
+    overflow: hidden;
+}
+
+html.mw-standalone .app-container {
+    height: var(--mw-app-height);
+    max-height: var(--mw-app-height);
+    min-height: 0;
+    padding-top: max(10px, var(--mw-safe-top));
+    padding-right: max(10px, var(--mw-safe-right));
+    padding-bottom: max(10px, var(--mw-safe-bottom));
+    padding-left: max(10px, var(--mw-safe-left));
+}
+
+html.mw-standalone .page-view,
+html.mw-standalone .editor-section,
+html.mw-standalone .workspace-panes,
+html.mw-standalone .editor-workspace,
+html.mw-standalone .editor-wrapper,
+html.mw-standalone .file-manager-section {
+    min-height: 0;
+}
+
+html.mw-standalone .file-tree,
+html.mw-standalone .editor-header,
+html.mw-standalone .breadcrumb-bar,
+html.mw-standalone .block-navigation-bar,
+html.mw-standalone .accessory-keyboard-bar,
+html.mw-standalone .editor-textarea {
+    -webkit-overflow-scrolling: touch;
+}
+
+html.mw-standalone .app-container.fullscreen {
+    height: var(--mw-app-height) !important;
+    max-height: var(--mw-app-height) !important;
+    padding-top: var(--mw-safe-top) !important;
+    padding-right: var(--mw-safe-right) !important;
+    padding-bottom: var(--mw-safe-bottom) !important;
+    padding-left: var(--mw-safe-left) !important;
+    gap: 0 !important;
+}
+
+html.mw-standalone .app-container.fullscreen #editorSection {
+    height: 100% !important;
+    min-height: 0;
+}
+
+html.mw-standalone .modal-overlay {
+    padding-top: var(--mw-safe-top);
+    padding-right: var(--mw-safe-right);
+    padding-bottom: var(--mw-safe-bottom);
+    padding-left: var(--mw-safe-left);
+}
+
+/* Keep text editing native-feeling without disabling code selection. */
+html.mw-standalone button,
+html.mw-standalone summary,
+html.mw-standalone .tab-btn,
+html.mw-standalone .tree-row,
+html.mw-standalone .symbol-btn {
+    -webkit-touch-callout: none;
+}
+
+/* When the software keyboard shrinks visualViewport, the JS-updated height
+   keeps the editor above the keyboard instead of leaving a 100vh dead zone. */
+html.mw-keyboard-open .app-container {
+    height: var(--mw-app-height);
+    max-height: var(--mw-app-height);
+}

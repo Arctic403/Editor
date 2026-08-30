@@ -1,0 +1,28 @@
+{
+  "name": "Mobile Workspace Editor",
+  "short_name": "Workspace",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "fullscreen"],
+  "orientation": "any",
+  "background_color": "#11141a",
+  "theme_color": "#11141a",
+  "description": "Mobile code workspace, GitHub sync, local testing and AI patch handoff.",
+  "categories": ["productivity", "developer"],
+  "icons": [
+    {
+      "src": "pwa-icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "pwa-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
