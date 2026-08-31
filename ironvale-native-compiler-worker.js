@@ -6,44 +6,18 @@
 'use strict';
 
 const WASM_CLANG_COMMIT = '648c4a89997a351eef75cdaec3ef5b89d4937dec';
-const TOOLCHAIN_BASE = `https://raw.githubusercontent.com/binji/wasm-clang/${WASM_CLANG_COMMIT}/`;
-const SHARED_RUNTIME = TOOLCHAIN_BASE + 'shared.js';
-const CLANG_URL = TOOLCHAIN_BASE + 'clang';
-const LLD_URL = TOOLCHAIN_BASE + 'lld';
-const MEMFS_URL = TOOLCHAIN_BASE + 'memfs';
-const TOOLCHAIN_CACHE = 'ironvale-browser-clang-v1';
+const TOOLCHAIN_MIRRORS = Object.freeze([
+  `https://cdn.jsdelivr.net/gh/binji/wasm-clang@${WASM_CLANG_COMMIT}/`,
+  `https://raw.githubusercontent.com/binji/wasm-clang/${WASM_CLANG_COMMIT}/`
+]);
+const TOOLCHAIN_CACHE = 'ironvale-browser-clang-v2';
+const TOOLCHAIN_CACHE_PREFIX = '__ironvale_browser_clang__';
 const EMPTY_TAR_URL = 'data:application/octet-stream;base64,' + btoa('\0'.repeat(1024));
 const moduleCache = new Map();
-
-importScripts(SHARED_RUNTIME);
+let sharedApiPromise = null;
 
 function report(message) {
   self.postMessage({ type: 'progress', message: String(message || '') });
-}
-
-async function cachedBytes(url) {
-  if (url.startsWith('data:')) {
-    const response = await fetch(url);
-    return response.arrayBuffer();
-  }
-  const request = new Request(url, { mode: 'cors', cache: 'force-cache' });
-  const cache = await caches.open(TOOLCHAIN_CACHE);
-  let response = await cache.match(request);
-  if (!response) {
-    report(`Downloading native toolchain: ${url.split('/').pop()}…`);
-    response = await fetch(request);
-    if (!response.ok) throw new Error(`Native toolchain download failed (${response.status}) for ${url}`);
-    await cache.put(request, response.clone());
-  }
-  return response.arrayBuffer();
-}
-
-async function compileModule(url) {
-  if (moduleCache.has(url)) return moduleCache.get(url);
-  const promise = cachedBytes(url).then(bytes => WebAssembly.compile(bytes));
-  moduleCache.set(url, promise);
-  try { return await promise; }
-  catch (error) { moduleCache.delete(url); throw error; }
 }
 
 function cleanPath(value) {
@@ -55,6 +29,116 @@ function cleanPath(value) {
     else out.push(part);
   }
   return out.join('/');
+}
+
+function toolchainName(value) {
+  const name = String(value || '').split('/').pop();
+  if (!['clang', 'lld', 'memfs'].includes(name)) throw new Error(`Unsupported compiler asset: ${value}`);
+  return name;
+}
+
+function cacheKey(name) {
+  return `${self.location.origin}/${TOOLCHAIN_CACHE_PREFIX}/${WASM_CLANG_COMMIT}/${name}`;
+}
+
+async function fetchWithTimeout(url, responseType = 'arrayBuffer', timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      mode: 'cors',
+      cache: 'no-store',
+      credentials: 'omit',
+      redirect: 'follow',
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return responseType === 'text' ? await response.text() : await response.arrayBuffer();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchFromMirrors(name, responseType = 'arrayBuffer') {
+  const failures = [];
+  for (const base of TOOLCHAIN_MIRRORS) {
+    const url = base + name;
+    try {
+      report(`Fetching compiler ${name} from ${new URL(base).hostname}…`);
+      const value = await fetchWithTimeout(url, responseType);
+      const size = responseType === 'text' ? value.length : value.byteLength;
+      if (!size) throw new Error('empty response');
+      return value;
+    } catch (error) {
+      failures.push(`${new URL(base).hostname}: ${error?.name || 'Error'} ${error?.message || error}`);
+      report(`Compiler mirror failed (${new URL(base).hostname}); trying fallback…`);
+    }
+  }
+  throw new Error(`Could not load compiler asset ${name}. ${failures.join(' | ')}`);
+}
+
+async function cachedBytes(value) {
+  if (String(value).startsWith('data:')) {
+    const response = await fetch(value);
+    return response.arrayBuffer();
+  }
+
+  const name = toolchainName(value);
+  const cache = await caches.open(TOOLCHAIN_CACHE);
+  const key = cacheKey(name);
+  const cached = await cache.match(key);
+  if (cached) {
+    const bytes = await cached.arrayBuffer();
+    if (bytes.byteLength) return bytes;
+    await cache.delete(key);
+  }
+
+  report(`Downloading native toolchain: ${name}…`);
+  const bytes = await fetchFromMirrors(name, 'arrayBuffer');
+  await cache.put(key, new Response(bytes.slice(0), {
+    headers: {
+      'Content-Type': 'application/wasm',
+      'Cache-Control': 'public, max-age=31536000, immutable'
+    }
+  }));
+  return bytes;
+}
+
+async function loadCompilerApi() {
+  if (sharedApiPromise) return sharedApiPromise;
+  sharedApiPromise = (async () => {
+    report('Loading browser compiler runtime…');
+    const source = await fetchFromMirrors('shared.js', 'text');
+    let factory;
+    try {
+      factory = new Function(`${source}\n;return API;`);
+    } catch (error) {
+      throw new Error(`Compiler runtime could not be parsed: ${error?.message || error}`);
+    }
+    let api;
+    try {
+      api = factory();
+    } catch (error) {
+      throw new Error(`Compiler runtime could not start: ${error?.message || error}`);
+    }
+    if (typeof api !== 'function') throw new Error('Compiler runtime loaded without its API constructor.');
+    return api;
+  })();
+  try {
+    return await sharedApiPromise;
+  } catch (error) {
+    sharedApiPromise = null;
+    throw error;
+  }
+}
+
+async function compileModule(value) {
+  const name = toolchainName(value);
+  if (moduleCache.has(name)) return moduleCache.get(name);
+  const promise = cachedBytes(name).then(bytes => WebAssembly.compile(bytes));
+  moduleCache.set(name, promise);
+  try { return await promise; }
+  catch (error) { moduleCache.delete(name); throw error; }
 }
 
 function addDirectories(memfs, path, created) {
@@ -70,6 +154,7 @@ function addDirectories(memfs, path, created) {
 }
 
 async function build(files) {
+  const API = await loadCompilerApi();
   const diagnostics = [];
   const hostWrite = text => {
     const value = String(text || '');
@@ -82,9 +167,9 @@ async function build(files) {
     readBuffer: cachedBytes,
     compileStreaming: compileModule,
     hostWrite,
-    clang: CLANG_URL,
-    lld: LLD_URL,
-    memfs: MEMFS_URL,
+    clang: 'clang',
+    lld: 'lld',
+    memfs: 'memfs',
     sysroot: EMPTY_TAR_URL,
     showTiming: false
   });
@@ -102,7 +187,7 @@ async function build(files) {
     api.memfs.addFile(file.path, file.content);
   }
 
-  const clang = await api.getModule(CLANG_URL);
+  const clang = await api.getModule('clang');
   const objects = [];
   let index = 0;
   for (const source of sources) {
@@ -122,7 +207,7 @@ async function build(files) {
   }
 
   report(`Linking RiftCore (${objects.length} object${objects.length === 1 ? '' : 's'})…`);
-  const lld = await api.getModule(LLD_URL);
+  const lld = await api.getModule('lld');
   const output = '__ironvale_rift_core.wasm';
   await api.run(
     lld,
