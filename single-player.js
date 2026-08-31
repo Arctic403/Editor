@@ -75,7 +75,7 @@
     const mime = match[1] || mimeFor(path);
     const binary = atob(match[2].replace(/\s/g, ''));
     const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < bin.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
     return new Response(bytes, { headers: { 'Content-Type': mime, 'Cache-Control': 'no-store' } });
   }
 
@@ -150,7 +150,7 @@
 
   async function validateNativeWasm(bytes) {
     const module = await WebAssembly.compile(bytes);
-    const { instance } = await WebAssembly.instantiate(module, {});
+    const instance = await WebAssembly.instantiate(module, {});
     const e = instance.exports;
     if (!e.memory || typeof e.rift_core_version !== 'function' || e.rift_core_version() !== 1) {
       throw new Error('Local C++ build has an invalid RiftCore ABI.');
