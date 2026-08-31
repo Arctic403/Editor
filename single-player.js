@@ -16,9 +16,9 @@
   })();
   const PREVIEW_PREFIX = EDITOR_BASE_PATH + '__ironvale_local_play__/';
   const CACHE_NAME = 'ironvale-local-play-preview-v1';
-  const NATIVE_CACHE_NAME = 'ironvale-local-native-build-v2';
-  const NATIVE_COMPILER_VERSION = 'riftcore-local-v2';
-  const NATIVE_COMPILER_WORKER = 'ironvale-native-compiler-worker.js?v=2';
+  const NATIVE_CACHE_NAME = 'ironvale-local-native-build-v3';
+  const NATIVE_COMPILER_VERSION = 'riftcore-local-v3';
+  const NATIVE_COMPILER_WORKER = 'ironvale-native-compiler-worker.js?v=3-ios-network';
   const SAVE_FILENAME = 'ironvale-local-play-state.json';
   const MAX_FILES = 6000;
   const MAX_BYTES = 120 * 1024 * 1024;
@@ -298,7 +298,7 @@
   async function ensureServiceWorker(log = () => {}) {
     if (!('serviceWorker' in navigator)) throw new Error('This browser does not support Service Workers.');
     log('Starting isolated Ironvale local backend…');
-    const workerUrl = new URL('ironvale-local-play-sw.js?v=1', location.href);
+    const workerUrl = new URL('ironvale-local-play-sw.js?v=2', location.href);
     const registration = await navigator.serviceWorker.register(workerUrl.href, { scope: PREVIEW_PREFIX });
     await waitForActive(registration);
     playRegistration = registration;
