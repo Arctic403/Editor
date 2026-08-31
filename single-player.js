@@ -1,6 +1,6 @@
 /* Ironvale Local Play
    Runs the CURRENT LOCAL Arctic403/Ironvale workspace from the Editor.
-   public/ assets are cached locally; native C++ is compiled to player-side WASM in-browser;
+   public/ assets are cached locally; changed native C++ is compiled to player-side WASM in-browser;
    the matching core backend is emulated by ironvale-local-play-sw.js.
 
    IMPORTANT: this is only the Local Play adapter. It does not modify the Editor,
@@ -16,12 +16,16 @@
   })();
   const PREVIEW_PREFIX = EDITOR_BASE_PATH + '__ironvale_local_play__/';
   const CACHE_NAME = 'ironvale-local-play-preview-v1';
-  const NATIVE_CACHE_NAME = 'ironvale-local-native-build-v1';
-  const NATIVE_COMPILER_VERSION = 'riftcore-local-v1';
-  const NATIVE_COMPILER_WORKER = 'ironvale-native-compiler-worker.js?v=1';
+  const NATIVE_CACHE_NAME = 'ironvale-local-native-build-v2';
+  const NATIVE_COMPILER_VERSION = 'riftcore-local-v2';
+  const NATIVE_COMPILER_WORKER = 'ironvale-native-compiler-worker.js?v=2';
   const SAVE_FILENAME = 'ironvale-local-play-state.json';
   const MAX_FILES = 6000;
   const MAX_BYTES = 120 * 1024 * 1024;
+  const CURRENT_NATIVE_BASELINE = Object.freeze([
+    Object.freeze({ path: 'native/include/rift/terrain.hpp', gitBlobSha: 'd2e319a8e50bf2c33cab313ca0c259588f46ce3a' }),
+    Object.freeze({ path: 'native/src/terrain.cpp', gitBlobSha: 'a488fe5fb15e88ad38c478bd08309787a4598619' })
+  ]);
   let playRegistration = null;
 
   const $ = id => document.getElementById(id);
@@ -71,7 +75,7 @@
     const mime = match[1] || mimeFor(path);
     const binary = atob(match[2].replace(/\s/g, ''));
     const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = binary.charCodeAt(i);
     return new Response(bytes, { headers: { 'Content-Type': mime, 'Cache-Control': 'no-store' } });
   }
 
@@ -108,11 +112,77 @@
     return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
   }
 
+  async function gitBlobSha(content) {
+    const encoder = new TextEncoder();
+    const body = encoder.encode(String(content ?? ''));
+    const header = encoder.encode(`blob ${body.byteLength}\0`);
+    const bytes = new Uint8Array(header.byteLength + body.byteLength);
+    bytes.set(header, 0);
+    bytes.set(body, header.byteLength);
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-1', bytes));
+    return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  function committedSourceManifest(files) {
+    try {
+      const raw = files.get('public/rift-core.sources.json');
+      if (!raw) return CURRENT_NATIVE_BASELINE;
+      const parsed = JSON.parse(raw);
+      if (parsed?.format !== 'rift-core-sources-v1' || !Array.isArray(parsed.sources)) return CURRENT_NATIVE_BASELINE;
+      return parsed.sources
+        .map(item => ({ path: normalizePath(item?.path), gitBlobSha: String(item?.gitBlobSha || '').toLowerCase() }))
+        .filter(item => item.path && /^[a-f0-9]{40}$/.test(item.gitBlobSha))
+        .sort((a, b) => a.path.localeCompare(b.path));
+    } catch {
+      return CURRENT_NATIVE_BASELINE;
+    }
+  }
+
+  async function nativeMatchesCommittedSources(files, nativeFiles) {
+    const expected = committedSourceManifest(files);
+    if (expected.length !== nativeFiles.length) return false;
+    for (let i = 0; i < expected.length; i += 1) {
+      if (expected[i].path !== nativeFiles[i].path) return false;
+      if (await gitBlobSha(nativeFiles[i].content) !== expected[i].gitBlobSha) return false;
+    }
+    return true;
+  }
+
+  async function validateNativeWasm(bytes) {
+    const module = await WebAssembly.compile(bytes);
+    const { instance } = await WebAssembly.instantiate(module, {});
+    const e = instance.exports;
+    if (!e.memory || typeof e.rift_core_version !== 'function' || e.rift_core_version() !== 1) {
+      throw new Error('Local C++ build has an invalid RiftCore ABI.');
+    }
+    if (typeof e.rift_terrain_init !== 'function' || e.rift_terrain_init(641, 641, 1, 0, 0, 0, .82) !== 1) {
+      throw new Error('Local C++ build failed RiftCore terrain initialization.');
+    }
+    const before = Number(e.rift_terrain_sample_height?.(320, 320));
+    if (!Number.isFinite(before) || Math.abs(before) > .001) throw new Error('Local C++ build failed flat-terrain sampling.');
+    if (e.rift_terrain_apply_brush?.(0, 320, 320, 8, .5, 0) !== 1) throw new Error('Local C++ build failed terrain sculpt self-test.');
+    const after = Number(e.rift_terrain_sample_height?.(320, 320));
+    if (!(after > before)) throw new Error('Local C++ build produced invalid sculpt math.');
+    if (e.rift_terrain_build_chunk?.(0, 0, 64, 2) !== 1 || Number(e.rift_mesh_index_count?.()) <= 0) {
+      throw new Error('Local C++ build failed chunk meshing self-test.');
+    }
+    if (e.rift_terrain_raycast?.(32, 50, 32, 0, -1, 0, 100, .5) !== 1) {
+      throw new Error('Local C++ build failed terrain raycast self-test.');
+    }
+    return true;
+  }
+
   async function compileNativeWorkspace(files, log) {
     const nativeFiles = nativeWorkspaceFiles(files);
     const sources = nativeFiles.filter(file => /\.(?:cc|cpp|cxx)$/i.test(file.path));
     if (!sources.length) {
       log('Native: no C++ sources; using the committed player WASM artifact.');
+      return null;
+    }
+
+    if (await nativeMatchesCommittedSources(files, nativeFiles)) {
+      try { await caches.delete('ironvale-local-native-build-v1'); } catch {}
+      log('Native: C++ matches the committed RiftCore sources; using the exact production WASM.');
       return null;
     }
 
@@ -122,12 +192,12 @@
     const cached = await nativeCache.match(cacheUrl);
     if (cached) {
       const bytes = await cached.arrayBuffer();
-      await WebAssembly.compile(bytes);
-      log(`Native: cached C++ build ${fingerprint.slice(0, 8)} (${(bytes.byteLength / 1024).toFixed(1)} KB).`);
+      await validateNativeWasm(bytes);
+      log(`Native: cached changed-C++ build ${fingerprint.slice(0, 8)} (${(bytes.byteLength / 1024).toFixed(1)} KB).`);
       return bytes;
     }
 
-    log(`Native: compiling ${sources.length} C++ source file${sources.length === 1 ? '' : 's'} on-device…`);
+    log(`Native: source differs from production; compiling ${sources.length} C++ source file${sources.length === 1 ? '' : 's'} on-device…`);
     const worker = new Worker(new URL(NATIVE_COMPILER_WORKER, location.href));
     const buffer = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -164,11 +234,11 @@
 
     const bytes = buffer instanceof ArrayBuffer ? buffer : buffer?.buffer;
     if (!(bytes instanceof ArrayBuffer) || !bytes.byteLength) throw new Error('Local C++ build returned no WASM bytes.');
-    await WebAssembly.compile(bytes);
+    await validateNativeWasm(bytes);
     await nativeCache.put(cacheUrl, new Response(bytes.slice(0), {
       headers: { 'Content-Type': 'application/wasm', 'Cache-Control': 'no-store' }
     }));
-    log(`Native: fresh RiftCore WASM ready (${(bytes.byteLength / 1024).toFixed(1)} KB).`);
+    log(`Native: fresh changed-C++ RiftCore WASM passed self-test (${(bytes.byteLength / 1024).toFixed(1)} KB).`);
     return bytes;
   }
 
@@ -203,7 +273,7 @@
       await cache.put(new Request(location.origin + PREVIEW_PREFIX + 'rift-core.wasm.gz'), new Response(nativeWasm.slice(0), {
         headers: { 'Content-Type': 'application/wasm', 'Cache-Control': 'no-store', 'X-Ironvale-Local-Native-Build': '1' }
       }));
-      log('Native: preview is using the freshly compiled player-side WASM, not the committed artifact.');
+      log('Native: preview is using the freshly compiled changed-source player-side WASM.');
     }
     log(`Prepared ${count} Ironvale public asset(s) from the local workspace.`);
   }
@@ -286,11 +356,11 @@
     overlay.innerHTML = `
       <section class="single-player-card">
         <div class="single-player-head">
-          <div><h2>🎮 Ironvale Local Play</h2><p>Local frontend + on-device C++→WASM + browser-emulated backend.</p></div>
+          <div><h2>🎮 Ironvale Local Play</h2><p>Local frontend + changed C++→WASM + browser-emulated backend.</p></div>
           <button id="singlePlayerClose" class="single-player-close" type="button">×</button>
         </div>
         <div class="single-player-note">
-          <b>Deploy-free native test sandbox.</b> PREPARE & PLAY reads the current Ironvale workspace. If <code>native/</code> C++ changed, it compiles RiftCore to WebAssembly inside a dedicated browser Worker and injects that fresh binary into the preview. The compiler toolchain is browser-cached after first use. The Editor, JSON AI handoff, production Worker, D1 and deployed game are untouched.
+          <b>Deploy-free native test sandbox.</b> PREPARE & PLAY reads the current Ironvale workspace. Native source fingerprints are compared to the committed RiftCore build: unchanged C++ uses the exact production WASM, while genuinely changed C++ is compiled in-browser and self-tested before the preview can use it. The Editor, JSON AI handoff, production Worker, D1 and deployed game are untouched.
         </div>
         <div id="singlePlayerStatus" class="single-player-status">Ready.</div>
         <div class="single-player-actions">
@@ -373,7 +443,7 @@
   function openModal() {
     ensureModal();
     setStatus(repo() === TARGET_REPO
-      ? `Ready for ${repo()} (${branch() || 'local'}).\nPREPARE & PLAY recompiles changed C++ locally and runs the current workspace without an Ironvale deployment.`
+      ? `Ready for ${repo()} (${branch() || 'local'}).\nPREPARE & PLAY uses production WASM unless native source actually changed.`
       : `Select/pull ${TARGET_REPO} first.\nCurrent repo: ${repo() || 'none'}.`);
     $('singlePlayerModal').classList.remove('hidden');
   }
