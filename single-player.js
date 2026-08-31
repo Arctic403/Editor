@@ -1,9 +1,9 @@
 /* Ironvale Local Play
-   Runs the CURRENT LOCAL Arctic403/Ironvale public/ workspace from the Editor.
-   Frontend assets come from the local workspace; the matching core backend is emulated
-   by ironvale-local-play-sw.js. No Ironvale deploy, Cloudflare Worker, D1, or GitHub write.
+   Runs the CURRENT LOCAL Arctic403/Ironvale workspace from the Editor.
+   public/ assets are cached locally; native C++ is compiled to player-side WASM in-browser;
+   the matching core backend is emulated by ironvale-local-play-sw.js.
 
-   IMPORTANT: this file is only the Local Play adapter. It does not modify the Editor,
+   IMPORTANT: this is only the Local Play adapter. It does not modify the Editor,
    workspace manager, or JSON AI handoff.
 */
 (() => {
@@ -16,6 +16,9 @@
   })();
   const PREVIEW_PREFIX = EDITOR_BASE_PATH + '__ironvale_local_play__/';
   const CACHE_NAME = 'ironvale-local-play-preview-v1';
+  const NATIVE_CACHE_NAME = 'ironvale-local-native-build-v1';
+  const NATIVE_COMPILER_VERSION = 'riftcore-local-v1';
+  const NATIVE_COMPILER_WORKER = 'ironvale-native-compiler-worker.js?v=1';
   const SAVE_FILENAME = 'ironvale-local-play-state.json';
   const MAX_FILES = 6000;
   const MAX_BYTES = 120 * 1024 * 1024;
@@ -55,20 +58,10 @@
   function mimeFor(path) {
     const ext = (path.split('.').pop() || '').toLowerCase();
     return ({
-      html: 'text/html; charset=utf-8',
-      js: 'text/javascript; charset=utf-8',
-      mjs: 'text/javascript; charset=utf-8',
-      css: 'text/css; charset=utf-8',
-      json: 'application/json; charset=utf-8',
-      svg: 'image/svg+xml',
-      png: 'image/png',
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      webp: 'image/webp',
-      gif: 'image/gif',
-      ico: 'image/x-icon',
-      txt: 'text/plain; charset=utf-8',
-      map: 'application/json'
+      html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8',
+      css: 'text/css; charset=utf-8', json: 'application/json; charset=utf-8', svg: 'image/svg+xml',
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif',
+      ico: 'image/x-icon', txt: 'text/plain; charset=utf-8', map: 'application/json', wasm: 'application/wasm'
     })[ext] || 'application/octet-stream';
   }
 
@@ -101,17 +94,92 @@
     return map;
   }
 
+  function nativeWorkspaceFiles(files) {
+    return [...files.entries()]
+      .filter(([path]) => path.startsWith('native/') && /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx)$/i.test(path))
+      .map(([path, content]) => ({ path, content }))
+      .sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  async function nativeFingerprint(nativeFiles) {
+    const encoder = new TextEncoder();
+    const text = [NATIVE_COMPILER_VERSION, ...nativeFiles.flatMap(file => [file.path, file.content])].join('\0');
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(text)));
+    return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function compileNativeWorkspace(files, log) {
+    const nativeFiles = nativeWorkspaceFiles(files);
+    const sources = nativeFiles.filter(file => /\.(?:cc|cpp|cxx)$/i.test(file.path));
+    if (!sources.length) {
+      log('Native: no C++ sources; using the committed player WASM artifact.');
+      return null;
+    }
+
+    const fingerprint = await nativeFingerprint(nativeFiles);
+    const nativeCache = await caches.open(NATIVE_CACHE_NAME);
+    const cacheUrl = location.origin + EDITOR_BASE_PATH + '__ironvale_native_build__/' + fingerprint + '.wasm';
+    const cached = await nativeCache.match(cacheUrl);
+    if (cached) {
+      const bytes = await cached.arrayBuffer();
+      await WebAssembly.compile(bytes);
+      log(`Native: cached C++ build ${fingerprint.slice(0, 8)} (${(bytes.byteLength / 1024).toFixed(1)} KB).`);
+      return bytes;
+    }
+
+    log(`Native: compiling ${sources.length} C++ source file${sources.length === 1 ? '' : 's'} on-device…`);
+    const worker = new Worker(new URL(NATIVE_COMPILER_WORKER, location.href));
+    const buffer = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        worker.terminate();
+        reject(new Error('Local C++ compiler stopped responding.'));
+      }, 180000);
+
+      worker.onmessage = event => {
+        const data = event.data || {};
+        if (data.type === 'progress') {
+          const message = String(data.message || '').trim();
+          if (message) log('Native: ' + message);
+          return;
+        }
+        if (data.type === 'done') {
+          clearTimeout(timeout);
+          worker.terminate();
+          resolve(data.buffer);
+          return;
+        }
+        if (data.type === 'error') {
+          clearTimeout(timeout);
+          worker.terminate();
+          reject(new Error(data.error || 'Local C++ build failed.'));
+        }
+      };
+      worker.onerror = event => {
+        clearTimeout(timeout);
+        worker.terminate();
+        reject(new Error(event.message || 'Local C++ compiler worker crashed.'));
+      };
+      worker.postMessage({ type: 'compile', files: nativeFiles });
+    });
+
+    const bytes = buffer instanceof ArrayBuffer ? buffer : buffer?.buffer;
+    if (!(bytes instanceof ArrayBuffer) || !bytes.byteLength) throw new Error('Local C++ build returned no WASM bytes.');
+    await WebAssembly.compile(bytes);
+    await nativeCache.put(cacheUrl, new Response(bytes.slice(0), {
+      headers: { 'Content-Type': 'application/wasm', 'Cache-Control': 'no-store' }
+    }));
+    log(`Native: fresh RiftCore WASM ready (${(bytes.byteLength / 1024).toFixed(1)} KB).`);
+    return bytes;
+  }
+
   function injectLocalPlayBridge(html) {
-    const script = `<script>
-window.__IRONVALE_LOCAL_PLAY__=true;
-window.__IRONVALE_LOCAL_PLAY_PREFIX__=${JSON.stringify(PREVIEW_PREFIX)};
-<\/script>`;
+    const script = `<script>\nwindow.__IRONVALE_LOCAL_PLAY__=true;\nwindow.__IRONVALE_LOCAL_PLAY_PREFIX__=${JSON.stringify(PREVIEW_PREFIX)};\n<\/script>`;
     const badge = `<style id="ironvale-local-play-badge">body:after{content:"IRONVALE · LOCAL PLAY";position:fixed;z-index:2147483647;right:8px;bottom:8px;padding:6px 9px;border-radius:8px;background:rgba(5,18,11,.84);color:#bff7cf;border:1px solid rgba(74,222,128,.48);font:800 10px system-ui;letter-spacing:.07em;pointer-events:none}</style>`;
     if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>${script}${badge}`);
     return script + badge + html;
   }
 
-  async function populatePreviewCache(files, log) {
+  async function populatePreviewCache(files, log, nativeWasm = null) {
     if (!files.has('public/index.html')) throw new Error('Ironvale public/index.html is missing from the local workspace.');
     const publicFiles = [...files.entries()].filter(([path]) => path.startsWith('public/'));
     const cache = await caches.open(CACHE_NAME);
@@ -129,6 +197,13 @@ window.__IRONVALE_LOCAL_PLAY_PREFIX__=${JSON.stringify(PREVIEW_PREFIX)};
       }
       await cache.put(new Request(location.origin + PREVIEW_PREFIX + rel), response);
       count += 1;
+    }
+
+    if (nativeWasm) {
+      await cache.put(new Request(location.origin + PREVIEW_PREFIX + 'rift-core.wasm.gz'), new Response(nativeWasm.slice(0), {
+        headers: { 'Content-Type': 'application/wasm', 'Cache-Control': 'no-store', 'X-Ironvale-Local-Native-Build': '1' }
+      }));
+      log('Native: preview is using the freshly compiled player-side WASM, not the committed artifact.');
     }
     log(`Prepared ${count} Ironvale public asset(s) from the local workspace.`);
   }
@@ -175,13 +250,8 @@ window.__IRONVALE_LOCAL_PLAY_PREFIX__=${JSON.stringify(PREVIEW_PREFIX)};
     });
   }
 
-  function previewUrl() {
-    return location.origin + PREVIEW_PREFIX + 'index.html';
-  }
-
-  function openPreview() {
-    window.open(previewUrl(), '_blank', 'noopener,noreferrer');
-  }
+  function previewUrl() { return location.origin + PREVIEW_PREFIX + 'index.html'; }
+  function openPreview() { window.open(previewUrl(), '_blank', 'noopener,noreferrer'); }
 
   function downloadJson(filename, value) {
     const blob = new Blob([JSON.stringify(value, null, 2) + '\n'], { type: 'application/json;charset=utf-8' });
@@ -216,11 +286,11 @@ window.__IRONVALE_LOCAL_PLAY_PREFIX__=${JSON.stringify(PREVIEW_PREFIX)};
     overlay.innerHTML = `
       <section class="single-player-card">
         <div class="single-player-head">
-          <div><h2>🎮 Ironvale Local Play</h2><p>Current local workspace + browser-emulated core backend. No Ironvale deployment.</p></div>
+          <div><h2>🎮 Ironvale Local Play</h2><p>Local frontend + on-device C++→WASM + browser-emulated backend.</p></div>
           <button id="singlePlayerClose" class="single-player-close" type="button">×</button>
         </div>
         <div class="single-player-note">
-          <b>Deploy-free test sandbox.</b> PREPARE & PLAY copies the current local <code>Ironvale/public/</code> workspace into a private preview cache. A dedicated service worker emulates the current auth/bootstrap/character/position API in browser storage. Your editor, JSON AI handoff, and production Ironvale backend are not modified or contacted. Terrain drafts created by Ironvale itself remain browser-local exactly like normal Local Play.
+          <b>Deploy-free native test sandbox.</b> PREPARE & PLAY reads the current Ironvale workspace. If <code>native/</code> C++ changed, it compiles RiftCore to WebAssembly inside a dedicated browser Worker and injects that fresh binary into the preview. The compiler toolchain is browser-cached after first use. The Editor, JSON AI handoff, production Worker, D1 and deployed game are untouched.
         </div>
         <div id="singlePlayerStatus" class="single-player-status">Ready.</div>
         <div class="single-player-actions">
@@ -277,17 +347,21 @@ window.__IRONVALE_LOCAL_PLAY_PREFIX__=${JSON.stringify(PREVIEW_PREFIX)};
     const button = $('singlePlayerRun');
     button.disabled = true;
     const lines = [];
-    const log = line => { lines.push(line); setStatus(lines.join('\n')); };
+    const log = line => {
+      lines.push(String(line));
+      if (lines.length > 28) lines.splice(0, lines.length - 28);
+      setStatus(lines.join('\n'));
+    };
     try {
       log(`Workspace: ${repo()} (${branch() || 'local'})`);
       log('Reading the current local workspace…');
       const workspace = await collectWorkspace();
       log(`Loaded ${workspace.size} workspace file(s).`);
+      const nativeWasm = await compileNativeWorkspace(workspace, log);
       log('Preparing current Ironvale public/ runtime…');
-      await populatePreviewCache(workspace, log);
+      await populatePreviewCache(workspace, log, nativeWasm);
       await ensureServiceWorker(log);
       log('Backend: browser-emulated auth/session/character API.');
-      log('Character position: persistent locally, including negative Y.');
       log('Cloudflare/D1: not contacted. GitHub: no write.');
       log('Opening Ironvale Local Play…');
       setTimeout(openPreview, 80);
@@ -299,7 +373,7 @@ window.__IRONVALE_LOCAL_PLAY_PREFIX__=${JSON.stringify(PREVIEW_PREFIX)};
   function openModal() {
     ensureModal();
     setStatus(repo() === TARGET_REPO
-      ? `Ready for ${repo()} (${branch() || 'local'}).\nPREPARE & PLAY uses the current local workspace. No Ironvale deployment is required.`
+      ? `Ready for ${repo()} (${branch() || 'local'}).\nPREPARE & PLAY recompiles changed C++ locally and runs the current workspace without an Ironvale deployment.`
       : `Select/pull ${TARGET_REPO} first.\nCurrent repo: ${repo() || 'none'}.`);
     $('singlePlayerModal').classList.remove('hidden');
   }
