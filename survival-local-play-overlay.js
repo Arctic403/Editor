@@ -41,6 +41,14 @@
 
     const runButton = $('singlePlayerRun');
     if (runButton) runButton.onclick = async () => {
+      // Drop any already-active legacy worker so PREPARE & PLAY cannot race a stale
+      // backend emulator on the first launch after this upgrade. Cache/state survive.
+      try {
+        const base = new URL('./', location.href);
+        const scope = new URL('__ironvale_local_play__/', base).href;
+        const registration = await navigator.serviceWorker?.getRegistration?.(scope);
+        if (registration) await registration.unregister();
+      } catch (_) {}
       const select = $('repoSelect');
       const original = select?.value || '';
       let temporary = null;
