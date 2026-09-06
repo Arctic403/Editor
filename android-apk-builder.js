@@ -1,15 +1,20 @@
-/* Real APK build layer for Universal Android Single Player. */
+/* Three-APK build layer for Universal Android Single Player. */
 (() => {
   'use strict';
 
   const BUILD_BRANCH_PREFIX = 'editor-local-apk-';
-  const BUILD_APK_PATH = '__editor_build__/Fallpoint-local-debug.apk';
+  const BUILD_OUTPUTS = Object.freeze({
+    arm32: '__editor_build__/Fallpoint-arm32-debug.apk',
+    arm64: '__editor_build__/Fallpoint-arm64-debug.apk',
+    universal: '__editor_build__/Fallpoint-universal-debug.apk'
+  });
   const $ = id => document.getElementById(id);
   const repo = () => $('repoSelect')?.value || '';
   const branch = () => $('branchSelect')?.value || 'main';
   const token = () => $('tokenInput')?.value?.trim() || '';
   const status = text => { if ($('singlePlayerStatus')) $('singlePlayerStatus').textContent = text; };
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  let lastBuild = null;
 
   async function templateText() {
     const response = await fetch(new URL('android-local-backend-template.java.txt', location.href), { cache: 'no-store' });
@@ -38,7 +43,7 @@
 
   function workflowText(files) {
     const v = parseToolVersions(files);
-    return `name: Editor Local APK\n\non:\n  push:\n\npermissions:\n  contents: write\n\njobs:\n  build:\n    if: \${{ !contains(github.event.head_commit.message, '[editor-apk]') }}\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-java@v4\n        with:\n          distribution: temurin\n          java-version: '17'\n      - uses: gradle/actions/setup-gradle@v4\n        with:\n          gradle-version: '9.6.0'\n      - uses: android-actions/setup-android@v3\n      - name: Install Android toolchain\n        run: |\n          yes | sdkmanager --licenses >/dev/null || true\n          sdkmanager \"platforms;android-${v.compileSdk}\" \"build-tools;${v.compileSdk}.0.0\" \"ndk;${v.ndk}\" \"cmake;${v.cmake}\"\n      - name: Build universal debug APK\n        run: gradle :app:assembleDebug --stacktrace\n      - name: Verify ARM32 + ARM64\n        run: |\n          APK=app/build/outputs/apk/debug/app-debug.apk\n          test -f \"$APK\"\n          unzip -l \"$APK\" | grep -q 'lib/armeabi-v7a/'\n          unzip -l \"$APK\" | grep -q 'lib/arm64-v8a/'\n          if [ -f scripts/verify_universal_apk.py ]; then python3 scripts/verify_universal_apk.py \"$APK\"; fi\n      - name: Publish APK to temporary build branch\n        run: |\n          mkdir -p __editor_build__\n          cp app/build/outputs/apk/debug/app-debug.apk ${BUILD_APK_PATH}\n          git config user.name \"Editor APK Builder\"\n          git config user.email \"editor-apk-builder@users.noreply.github.com\"\n          git add -f ${BUILD_APK_PATH}\n          git commit -m \"[editor-apk] universal debug APK\"\n          git push origin HEAD:\${{ github.ref_name }}\n`;
+    return `name: Editor Local APK\n\non:\n  push:\n\npermissions:\n  contents: write\n\njobs:\n  build:\n    if: \${{ !contains(github.event.head_commit.message, '[editor-apk]') }}\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-java@v4\n        with:\n          distribution: temurin\n          java-version: '17'\n      - uses: gradle/actions/setup-gradle@v4\n        with:\n          gradle-version: '9.6.0'\n      - uses: android-actions/setup-android@v3\n      - name: Install Android toolchain\n        run: |\n          yes | sdkmanager --licenses >/dev/null || true\n          sdkmanager \"platforms;android-${v.compileSdk}\" \"build-tools;${v.compileSdk}.0.0\" \"ndk;${v.ndk}\" \"cmake;${v.cmake}\"\n      - name: Build universal debug APK\n        run: gradle :app:assembleDebug --stacktrace\n      - name: Verify universal source APK\n        run: |\n          APK=app/build/outputs/apk/debug/app-debug.apk\n          test -f \"$APK\"\n          unzip -Z1 \"$APK\" | grep -q '^lib/armeabi-v7a/'\n          unzip -Z1 \"$APK\" | grep -q '^lib/arm64-v8a/'\n          if unzip -Z1 \"$APK\" | grep -Eq '^lib/(x86|x86_64)/'; then echo \"Unexpected x86 ABI in universal APK\"; exit 1; fi\n          if [ -f scripts/verify_universal_apk.py ]; then python3 scripts/verify_universal_apk.py \"$APK\"; fi\n      - name: Produce ARM32 ARM64 and universal APKs\n        run: |\n          set -euo pipefail\n          SRC=app/build/outputs/apk/debug/app-debug.apk\n          OUT=__editor_build__\n          mkdir -p \"$OUT\" /tmp/editor-apk-split\n          cp \"$SRC\" \"$OUT/Fallpoint-universal-debug.apk\"\n\n          BT=\"$(ls -d \"$ANDROID_HOME\"/build-tools/* | sort -V | tail -1)\"\n          KEYSTORE=\"$HOME/.android/debug.keystore\"\n          if [ ! -f \"$KEYSTORE\" ]; then\n            mkdir -p \"$(dirname \"$KEYSTORE\")\"\n            keytool -genkeypair -v -keystore \"$KEYSTORE\" -storepass android -alias androiddebugkey -keypass android -dname \"CN=Android Debug,O=Android,C=US\" -keyalg RSA -keysize 2048 -validity 10000\n          fi\n\n          cp \"$SRC\" /tmp/editor-apk-split/arm32-raw.apk\n          zip -q -d /tmp/editor-apk-split/arm32-raw.apk 'lib/arm64-v8a/*' 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' || true\n          if \"$BT/zipalign\" -h 2>&1 | grep -q -- '-P'; then\n            \"$BT/zipalign\" -f -P 16 4 /tmp/editor-apk-split/arm32-raw.apk /tmp/editor-apk-split/arm32-aligned.apk\n          else\n            \"$BT/zipalign\" -f 4 /tmp/editor-apk-split/arm32-raw.apk /tmp/editor-apk-split/arm32-aligned.apk\n          fi\n          \"$BT/apksigner\" sign --ks \"$KEYSTORE\" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out \"$OUT/Fallpoint-arm32-debug.apk\" /tmp/editor-apk-split/arm32-aligned.apk\n\n          cp \"$SRC\" /tmp/editor-apk-split/arm64-raw.apk\n          zip -q -d /tmp/editor-apk-split/arm64-raw.apk 'lib/armeabi-v7a/*' 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' || true\n          if \"$BT/zipalign\" -h 2>&1 | grep -q -- '-P'; then\n            \"$BT/zipalign\" -f -P 16 4 /tmp/editor-apk-split/arm64-raw.apk /tmp/editor-apk-split/arm64-aligned.apk\n          else\n            \"$BT/zipalign\" -f 4 /tmp/editor-apk-split/arm64-raw.apk /tmp/editor-apk-split/arm64-aligned.apk\n          fi\n          \"$BT/apksigner\" sign --ks \"$KEYSTORE\" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out \"$OUT/Fallpoint-arm64-debug.apk\" /tmp/editor-apk-split/arm64-aligned.apk\n\n          \"$BT/apksigner\" verify --verbose \"$OUT/Fallpoint-universal-debug.apk\"\n          \"$BT/apksigner\" verify --verbose \"$OUT/Fallpoint-arm32-debug.apk\"\n          \"$BT/apksigner\" verify --verbose \"$OUT/Fallpoint-arm64-debug.apk\"\n\n          unzip -Z1 \"$OUT/Fallpoint-universal-debug.apk\" | grep -q '^lib/armeabi-v7a/'\n          unzip -Z1 \"$OUT/Fallpoint-universal-debug.apk\" | grep -q '^lib/arm64-v8a/'\n\n          unzip -Z1 \"$OUT/Fallpoint-arm32-debug.apk\" | grep -q '^lib/armeabi-v7a/'\n          if unzip -Z1 \"$OUT/Fallpoint-arm32-debug.apk\" | grep -q '^lib/arm64-v8a/'; then echo \"ARM32 APK still contains ARM64\"; exit 1; fi\n\n          unzip -Z1 \"$OUT/Fallpoint-arm64-debug.apk\" | grep -q '^lib/arm64-v8a/'\n          if unzip -Z1 \"$OUT/Fallpoint-arm64-debug.apk\" | grep -q '^lib/armeabi-v7a/'; then echo \"ARM64 APK still contains ARM32\"; exit 1; fi\n\n          echo \"PASS: generated ARM32, ARM64 and universal APKs\"\n      - name: Publish three APKs to temporary build branch\n        run: |\n          git config user.name \"Editor APK Builder\"\n          git config user.email \"editor-apk-builder@users.noreply.github.com\"\n          git add -f __editor_build__/Fallpoint-arm32-debug.apk __editor_build__/Fallpoint-arm64-debug.apk __editor_build__/Fallpoint-universal-debug.apk\n          git commit -m \"[editor-apk] ARM32 ARM64 universal debug APKs\"\n          git push origin HEAD:\${{ github.ref_name }}\n`;
   }
 
   async function gh(path, options = {}) {
@@ -84,28 +89,31 @@
     log(`Uploading ${entries.length} files to temporary build branch…`);
     const tree = await mapLimit(entries, 6, async ([path, content]) => ({ path, mode: '100644', type: 'blob', sha: await createBlob(content) }));
     const treeObj = await gh('/git/trees', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base_tree: baseCommit.tree.sha, tree }) });
-    const commit = await gh('/git/commits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Editor local universal APK build', tree: treeObj.sha, parents: [baseSha] }) });
+    const commit = await gh('/git/commits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Editor local three-APK build', tree: treeObj.sha, parents: [baseSha] }) });
     await gh(`/git/refs/heads/${encodeURIComponent(buildBranch)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sha: commit.sha, force: true }) });
     return commit.sha;
   }
 
-  async function waitForApk(buildBranch, log) {
+  async function waitForApks(buildBranch, log) {
     for (let attempt = 0; attempt < 90; attempt += 1) {
       await sleep(attempt < 8 ? 3000 : 6000);
       try {
-        const item = await gh(`/contents/${BUILD_APK_PATH}?ref=${encodeURIComponent(buildBranch)}`);
-        if (item?.sha) return item;
+        const pairs = await Promise.all(Object.entries(BUILD_OUTPUTS).map(async ([key, path]) => {
+          const item = await gh(`/contents/${path}?ref=${encodeURIComponent(buildBranch)}`);
+          return [key, item];
+        }));
+        if (pairs.every(([, item]) => item?.sha)) return Object.fromEntries(pairs);
       } catch {}
       if (attempt % 3 === 0) {
         const runs = await gh(`/actions/runs?branch=${encodeURIComponent(buildBranch)}&event=push&per_page=5`).catch(() => null);
         const run = runs?.workflow_runs?.find(x => x.name === 'Editor Local APK');
         if (run) {
           log(`Build: ${run.status}${run.conclusion ? ` / ${run.conclusion}` : ''}`);
-          if (run.status === 'completed' && run.conclusion !== 'success') throw new Error(`APK build failed (${run.conclusion}). Check the Actions run for the compiler error.`);
+          if (run.status === 'completed' && run.conclusion !== 'success') throw new Error(`APK build failed (${run.conclusion}). Check the Actions run for the compiler or packaging error.`);
         }
       }
     }
-    throw new Error('Timed out waiting for the APK build.');
+    throw new Error('Timed out waiting for the three APK builds.');
   }
 
   async function downloadBlob(sha) {
@@ -120,12 +128,47 @@
   function download(name, blob) {
     const url = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 
-  async function buildApk() {
+  function ensureDownloadPanel() {
+    const modal = $('singlePlayerModal');
+    if (!modal) return null;
+    let panel = $('singlePlayerApkDownloads');
+    if (panel) return panel;
+    panel = document.createElement('div');
+    panel.id = 'singlePlayerApkDownloads';
+    panel.className = 'single-player-actions';
+    panel.style.display = 'none';
+    panel.innerHTML = `
+      <button id="downloadArm32Apk" class="single-player-secondary" type="button">DOWNLOAD ARM32 APK</button>
+      <button id="downloadArm64Apk" class="single-player-secondary" type="button">DOWNLOAD ARM64 APK</button>
+      <button id="downloadUniversalApk" class="single-player-secondary" type="button">DOWNLOAD UNIVERSAL APK</button>
+      <button id="downloadAllApks" class="single-player-run" type="button">DOWNLOAD ALL 3</button>`;
+    const actions = modal.querySelector('.single-player-actions');
+    actions?.after(panel);
+    $('downloadArm32Apk').onclick = () => downloadLast('arm32');
+    $('downloadArm64Apk').onclick = () => downloadLast('arm64');
+    $('downloadUniversalApk').onclick = () => downloadLast('universal');
+    $('downloadAllApks').onclick = () => {
+      downloadLast('arm32');
+      setTimeout(() => downloadLast('arm64'), 180);
+      setTimeout(() => downloadLast('universal'), 360);
+    };
+    return panel;
+  }
+
+  function downloadLast(kind) {
+    const item = lastBuild?.[kind];
+    if (!item) throw new Error('Build the APKs first.');
+    download(item.name, item.blob);
+  }
+
+  async function buildApks() {
     const button = $('singlePlayerRun'); if (button) button.disabled = true;
-    const lines = []; const log = line => { lines.push(String(line)); status(lines.slice(-32).join('\n')); };
+    const panel = ensureDownloadPanel(); if (panel) panel.style.display = 'none';
+    lastBuild = null;
+    const lines = []; const log = line => { lines.push(String(line)); status(lines.slice(-36).join('\n')); };
     let buildBranch = '';
     try {
       const api = window.FallpointAndroidLocalTest;
@@ -141,16 +184,28 @@
       snapshot.set('.github/workflows/editor-local-apk.yml', workflowText(snapshot));
       buildBranch = `${BUILD_BRANCH_PREFIX}${Date.now()}`;
       log('Production backend: OFF');
-      log('Starting isolated universal APK build…');
+      log('Building ARM32 + ARM64 + universal APKs…');
       const commit = await pushTemporaryBuild(snapshot, buildBranch, log);
       log(`Build source: ${commit.slice(0, 8)}`);
-      const item = await waitForApk(buildBranch, log);
-      log('APK built and ABI-verified. Downloading…');
-      const apk = await downloadBlob(item.sha);
+      const items = await waitForApks(buildBranch, log);
+      log('All three APKs built, aligned, signed and ABI-verified.');
+      const [arm32, arm64, universal] = await Promise.all([
+        downloadBlob(items.arm32.sha),
+        downloadBlob(items.arm64.sha),
+        downloadBlob(items.universal.sha)
+      ]);
       const safe = (repo().split('/').pop() || 'Fallpoint').replace(/[^a-z0-9._-]+/gi, '-');
-      download(`${safe}-local-debug.apk`, apk);
-      log(`DONE: ${safe}-local-debug.apk`);
-      log('Contains armeabi-v7a + arm64-v8a.');
+      lastBuild = {
+        arm32: { name: `${safe}-arm32-debug.apk`, blob: arm32 },
+        arm64: { name: `${safe}-arm64-debug.apk`, blob: arm64 },
+        universal: { name: `${safe}-universal-debug.apk`, blob: universal }
+      };
+      if (panel) panel.style.display = 'flex';
+      log('READY: 3 APKs');
+      log('ARM32 = armeabi-v7a only');
+      log('ARM64 = arm64-v8a only');
+      log('Universal = ARM32 + ARM64');
+      log('Use the download buttons below.');
     } finally {
       if (buildBranch) try { await gh(`/git/refs/heads/${encodeURIComponent(buildBranch)}`, { method: 'DELETE' }); } catch {}
       if (button) button.disabled = false;
@@ -162,13 +217,14 @@
     const button = $('singlePlayerRun');
     const modal = $('singlePlayerModal');
     if (!api || !button || !modal) return false;
-    button.textContent = 'BUILD & DOWNLOAD APK';
-    button.onclick = () => buildApk().catch(error => status('APK build failed:\n' + (error.message || error)));
+    button.textContent = 'BUILD 3 APKS';
+    button.onclick = () => buildApks().catch(error => status('APK build failed:\n' + (error.message || error)));
+    ensureDownloadPanel();
     const note = modal.querySelector('.single-player-note');
-    if (note) note.innerHTML = '<b>Real APK test build.</b> The current local workspace is copied to an isolated temporary build branch. GitHub Actions runs the Android SDK/NDK compiler, verifies ARM32 + ARM64, the Editor downloads the resulting APK to this phone, then deletes the temporary branch. Your selected game branch is not modified.';
+    if (note) note.innerHTML = '<b>Three real APK test builds.</b> The Editor builds one verified universal APK, derives aligned/signed ARM32-only and ARM64-only APKs from the exact same binary, then gives you separate download buttons for all three. The temporary build branch is deleted and your selected game branch is not modified.';
     const sub = modal.querySelector('.single-player-head p');
-    if (sub) sub.textContent = 'Build and download a real universal Android debug APK.';
-    window.FallpointAndroidApkBuilder = Object.freeze({ build: buildApk });
+    if (sub) sub.textContent = 'ARM32-only + ARM64-only + universal Android debug APKs.';
+    window.FallpointAndroidApkBuilder = Object.freeze({ build: buildApks, download: downloadLast });
     return true;
   }
 
