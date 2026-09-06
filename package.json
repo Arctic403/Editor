@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "node --check pwa-ios.js && node --check app-safari-v11.js && node --check ide-v11.js && node --check ai-handoff.js && node --check local-test.js && node --check single-player.js && node --check survival-local-play-overlay.js && node --check ironvale-local-play-sw.js && node --check survival-local-play-sw.js && node --check survival-local-play-core.js && node --check survival-local-play-authority.js && node --check survival-local-play-routes.js && node --check survival-local-play-island-v2.js && node --check local-test-sw.js && node --check live-test.js && node --check worker.js"
+    "check": "node --check pwa-ios.js && node --check app-safari-v11.js && node --check ide-v11.js && node --check ai-handoff.js && node --check local-test.js && node --check single-player.js && node --check android-single-player.js && node --check survival-local-play-overlay.js && node --check ironvale-local-play-sw.js && node --check survival-local-play-sw.js && node --check survival-local-play-core.js && node --check survival-local-play-authority.js && node --check survival-local-play-routes.js && node --check survival-local-play-island-v2.js && node --check local-test-sw.js && node --check live-test.js && node --check worker.js"
   },
   "devDependencies": {
     "wrangler": "^4.36.0"
