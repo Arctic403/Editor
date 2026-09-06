@@ -1,5 +1,5 @@
 /* Universal Android Single Player compatibility entry.
-   Loads the validator/local-state layer, then the real APK build/download layer.
+   Loads the validator/local-state layer, then the three-APK build/download layer.
 */
 (() => {
   'use strict';
@@ -8,7 +8,7 @@
   core.async = false;
   core.onload = () => {
     const builder = document.createElement('script');
-    builder.src = new URL('android-apk-builder.js?v=1-real-apk', location.href).href;
+    builder.src = new URL('android-apk-builder.js?v=2-three-apks', location.href).href;
     builder.async = false;
     document.head.appendChild(builder);
   };
