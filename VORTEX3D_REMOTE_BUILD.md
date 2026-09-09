@@ -10,7 +10,7 @@ The button performs the full local-controller flow without using a Vortex3D GitH
 4. Explicitly excludes/deletes `.github/workflows/` so Vortex3D remains an Actions-free source repository even if an old local workspace still contains stale workflow files.
 5. Directly `workflow_dispatch`es `Arctic403/VTXBuilder/.github/workflows/vortex3d-worker.yml` with the exact source SHA and a unique Editor client id.
 6. Polls private Vortex3D releases for that exact source SHA + client id.
-7. On success, exposes download buttons for the verification ZIP and Universal APK. Downloads only happen when the user explicitly clicks and chooses a save location.
+7. On success, exposes download buttons for the verification ZIP and Universal APK. The Editor consumes only verified Vortex3D prerelease artifacts. Downloads happen only when the user explicitly clicks.
 8. On failure, automatically downloads the private worker failure-diagnostics ZIP when available.
 
 ## Token permissions

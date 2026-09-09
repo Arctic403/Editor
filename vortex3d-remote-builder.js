@@ -1,6 +1,6 @@
 /* Vortex3D local-controller build path.
    Keeps Vortex3D Actions at zero: the browser syncs source to private Vortex3D,
-   dispatches public VTXBuilder, then downloads private results back to the device.
+   dispatches public VTXBuilder, then consumes verified Vortex3D prerelease artifacts.
 */
 (() => {
   'use strict';
@@ -207,7 +207,7 @@
             <h3>Vortex3D → VTXBuilder</h3>
             <span class="modal-close" id="vortexBuildClose">✕</span>
           </div>
-          <p style="font-size:.82rem;color:#aeb7c6;margin-top:0">Local workspace → private Vortex3D source commit → public VTXBuilder verification → private release → local download. Vortex3D Actions stay disabled.</p>
+          <p style="font-size:.82rem;color:#aeb7c6;margin-top:0">Local workspace → private Vortex3D source commit → public VTXBuilder verification → Vortex3D prerelease artifact. Vortex3D Actions stay disabled.</p>
           <pre id="vortexBuildLog" style="white-space:pre-wrap;max-height:48vh;overflow:auto;background:#0d1117;padding:12px;border-radius:8px;font-size:.78rem"></pre>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
             <button class="btn btn-success" style="display:none" id="vortexDownloadVerification" type="button">⬇️ Verification ZIP</button>
@@ -409,7 +409,7 @@
       const releases = await gh(VORTEX_REPO, '/releases?per_page=40');
       const release = releases.find(item => {
         const body = String(item?.body || '');
-        return body.includes(sourceMarker) && body.includes(clientMarker);
+        return Boolean(item?.prerelease) && body.includes(sourceMarker) && body.includes(clientMarker);
       });
       if (release) return release;
       if (i === 0) log('Worker running full verification…');
@@ -465,15 +465,15 @@
     if (failed) {
       const diagnostics = assets.find(asset => /worker-failure-.*\.zip$/i.test(asset.name));
       if (diagnostics) {
-        log('Build failed. Downloading private failure diagnostics…');
-        await downloadReleaseAsset(diagnostics);
+        log(`Build failed. Private failure diagnostics available: ${diagnostics.name}`);
+        setDownloadVisible('vortexDownloadVerification', true);
       }
-      throw new Error(`VTXBuilder failed for ${sourceSha.slice(0, 12)}. Private failure diagnostics were returned${diagnostics ? ' and downloaded' : ''}.`);
+      throw new Error(`VTXBuilder failed for ${sourceSha.slice(0, 12)}. Check the private Vortex3D prerelease diagnostics.`);
     }
 
     const verification = assets.find(asset => /^Vortex3D-verification-.*\.zip$/i.test(asset.name));
     const universal = assets.find(asset => /universal-debug\.apk$/i.test(asset.name));
-    if (!verification) throw new Error('Worker succeeded but the verification ZIP is missing from the private release.');
+    if (!verification) throw new Error('Worker succeeded but the verification ZIP is missing from the private Vortex3D prerelease.');
 
     lastSuccess = { release, verification, universal, status: 'artifact_ready', sourceSha };
     saveBuildState();
@@ -499,7 +499,7 @@
       const releases = await gh(VORTEX_REPO, '/releases?per_page=40');
       const release = releases.find(item => {
         const body = String(item?.body || '');
-        return body.includes(`Source ${sourceSha}.`) || body.includes(sourceSha);
+        return Boolean(item?.prerelease) && (body.includes(`Source ${sourceSha}.`) || body.includes(sourceSha));
       });
       if (!release) {
         const log = logger();
@@ -551,7 +551,7 @@
     if (!token()) return alert('Connect your GitHub token first.');
     const branch = selectedBranch();
     if (!branch) return alert('Choose a Vortex3D branch first.');
-    if (!confirm(`Sync the COMPLETE local Vortex3D workspace to ${branch}, run the full VTXBuilder verification, and download the private result ZIP back to this device?\n\nOnly changed source blobs are uploaded. No Vortex3D GitHub Action will run.`)) return;
+    if (!confirm(`Sync the COMPLETE local Vortex3D workspace to ${branch}, run the full VTXBuilder verification, and publish the verified result to a Vortex3D prerelease?\n\nOnly changed source blobs are uploaded. No Vortex3D GitHub Action will run.`)) return;
 
     activeBuild = true;
     clearDownloads(true);
