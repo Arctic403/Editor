@@ -466,6 +466,47 @@
     if (universal) log('Universal APK is also available from the button below.');
   }
 
+
+  async function checkLatestSuccessfulArtifact() {
+    // Passive startup path: consume known-good artifacts only. Never dispatches builds.
+    if (!isVortex() || !token()) return false;
+    try {
+      const branch = selectedBranch();
+      const ref = await gh(VORTEX_REPO, `/git/ref/heads/${encodeURIComponent(branch)}`);
+      const sourceSha = ref?.object?.sha;
+      if (!sourceSha) return false;
+
+      const releases = await gh(VORTEX_REPO, '/releases?per_page=40');
+      const release = releases.find(item => {
+        const body = String(item?.body || '');
+        return body.includes(`Source ${sourceSha}.`) || body.includes(sourceSha);
+      });
+      if (!release) {
+        const log = logger();
+        log(`No successful build artifact found for ${sourceSha.slice(0, 12)}.`);
+        log('Build manually with 🛠 Vortex Build if needed.');
+        return false;
+      }
+
+      const assets = release.assets || [];
+      const verification = assets.find(asset => /^Vortex3D-verification-.*\.zip$/i.test(asset.name));
+      const universal = assets.find(asset => /universal-debug\.apk$/i.test(asset.name));
+      if (!verification) return false;
+
+      lastSuccess = { release, verification, universal, status: 'artifact_ready', sourceSha };
+      saveBuildState();
+      restoreDownloads();
+
+      const log = logger();
+      log(`Successful artifact found for ${sourceSha.slice(0, 12)}.`);
+      log('Pulled existing build metadata. No rebuild triggered.');
+      return true;
+    } catch (error) {
+      console.warn('Artifact lookup skipped:', error);
+      return false;
+    }
+  }
+
   function hasRecoverableBuild() {
     return Boolean(lastSuccess?.verification && lastSuccess?.status === 'artifact_ready');
   }
@@ -540,9 +581,11 @@
     restoreDownloads();
     updateVisibility();
     $('repoSelect')?.addEventListener('change', updateVisibility);
+    $('repoSelect')?.addEventListener('change', () => checkLatestSuccessfulArtifact());
     guardDirectWorkflowPushes();
     window.addEventListener('pageshow', updateVisibility);
-    window.Vortex3DRemoteBuilder = Object.freeze({ build: runBuild, recover: recoverExistingBuild });
+    window.Vortex3DRemoteBuilder = Object.freeze({ build: runBuild, recover: recoverExistingBuild, checkArtifact: checkLatestSuccessfulArtifact });
+    checkLatestSuccessfulArtifact();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
