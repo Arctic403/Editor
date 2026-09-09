@@ -7,7 +7,7 @@
     if (document.querySelector('script[data-vortex3d-remote-builder]')) return;
     const script = document.createElement('script');
     script.dataset.vortex3dRemoteBuilder = '1';
-    script.src = new URL('vortex3d-remote-builder.js?v=2-visible-controller', location.href).href;
+    script.src = new URL('vortex3d-remote-builder.js?v=3-delta-upload', location.href).href;
     script.async = false;
     document.head.appendChild(script);
   }
@@ -46,7 +46,7 @@
       const button = document.getElementById('vortexRemoteBuildBtn');
       if (button) {
         button.style.display = '';
-        button.title = 'Select Arctic403/Vortex3d and click to push the complete local workspace to Vortex3D, run VTXBuilder, and download the private result.';
+        button.title = 'Select Arctic403/Vortex3d and click to sync only changed files, run VTXBuilder, and download the private result.';
         return;
       }
       if (tries++ < 100) setTimeout(tick, 50);
