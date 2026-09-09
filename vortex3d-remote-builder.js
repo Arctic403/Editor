@@ -454,7 +454,7 @@
     const universal = assets.find(asset => /universal-debug\.apk$/i.test(asset.name));
     if (!verification) throw new Error('Worker succeeded but the verification ZIP is missing from the private release.');
 
-    lastSuccess = { release, verification, universal };
+    lastSuccess = { release, verification, universal, status: 'artifact_ready', sourceSha };
     saveBuildState();
     setDownloadVisible('vortexDownloadVerification', true);
     setDownloadVisible('vortexDownloadUniversal', Boolean(universal));
@@ -466,8 +466,26 @@
     if (universal) log('Universal APK is also available from the button below.');
   }
 
+  function hasRecoverableBuild() {
+    return Boolean(lastSuccess?.verification && lastSuccess?.status === 'artifact_ready');
+  }
+
+  async function recoverExistingBuild() {
+    if (!hasRecoverableBuild()) return false;
+    showModal();
+    restoreDownloads();
+    const log = logger();
+    log(`Existing green build found: ${lastSuccess.sourceSha ? lastSuccess.sourceSha.slice(0, 12) : 'unknown'}`);
+    log('Artifact recovery mode: no rebuild triggered.');
+    return true;
+  }
+
   async function runBuild() {
     if (activeBuild) return;
+    if (hasRecoverableBuild() && !confirm('A completed VTXBuilder build already exists. Rebuild from scratch?\n\nCancel will open artifact recovery instead.')) {
+      await recoverExistingBuild();
+      return;
+    }
     if (!isVortex()) return alert(`Select ${VORTEX_REPO} first.`);
     if (!token()) return alert('Connect your GitHub token first.');
     const branch = selectedBranch();
@@ -524,7 +542,7 @@
     $('repoSelect')?.addEventListener('change', updateVisibility);
     guardDirectWorkflowPushes();
     window.addEventListener('pageshow', updateVisibility);
-    window.Vortex3DRemoteBuilder = Object.freeze({ build: runBuild });
+    window.Vortex3DRemoteBuilder = Object.freeze({ build: runBuild, recover: recoverExistingBuild });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
