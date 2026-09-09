@@ -481,9 +481,8 @@
     setDownloadVisible('vortexDownloadUniversal', Boolean(universal));
     log('GREEN: full VTXBuilder verification passed.');
     log(`Private release: ${release.name || release.tag_name}`);
-    log('Downloading verification ZIP back to this device…');
-    await downloadReleaseAsset(verification);
-    log('READY: verification ZIP downloaded locally. It contains the APK verification bundle and build evidence.');
+    log('READY: verification ZIP and Universal APK artifacts are available.');
+    log('Downloads only start when you press the download buttons.');
     if (universal) log('Universal APK is also available from the button below.');
   }
 
