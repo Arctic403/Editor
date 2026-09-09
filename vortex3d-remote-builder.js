@@ -428,6 +428,32 @@
   async function downloadReleaseAsset(asset) {
     if (!asset) throw new Error('Requested build asset is unavailable.');
     const blob = await assetBlob(asset);
+
+    // Prefer the native Save dialog so the user always knows where build artifacts go.
+    // Falls back to the normal browser download behavior when unsupported.
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: asset.name,
+          types: [{
+            description: 'Vortex3D build artifact',
+            accept: { 'application/octet-stream': ['.zip', '.apk'] }
+          }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        log(`Saved locally: ${asset.name}`);
+        return;
+      } catch (err) {
+        if (err?.name === 'AbortError') {
+          log(`Save cancelled: ${asset.name}`);
+          return;
+        }
+        log(`Save dialog unavailable, using browser download fallback.`);
+      }
+    }
+
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -436,6 +462,7 @@
     anchor.click();
     anchor.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
+    log(`Download started: ${asset.name}`);
   }
 
   async function handleRelease(release, sourceSha, log) {
