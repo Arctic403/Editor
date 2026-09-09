@@ -1,7 +1,6 @@
 /* Vortex3D local-controller build path.
-   Pushes the current browser workspace to private Arctic403/Vortex3d as one source
-   commit, dispatches public Arctic403/VTXBuilder, then downloads the private result
-   ZIP back to the device. Vortex3D itself runs zero GitHub Actions.
+   Keeps Vortex3D Actions at zero: the browser syncs source to private Vortex3D,
+   dispatches public VTXBuilder, then downloads private results back to the device.
 */
 (() => {
   'use strict';
@@ -13,6 +12,9 @@
   const WORKSPACE_STORE = 'files';
   const POLL_MS = 10000;
   const MAX_POLLS = 540; // 90 minutes
+  const REQUEST_TIMEOUT_MS = 45000;
+  const REQUEST_RETRIES = 3;
+  const UPLOAD_CONCURRENCY = 3;
   const $ = id => document.getElementById(id);
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   let activeBuild = false;
@@ -35,15 +37,38 @@
   }
 
   async function gh(repo, path, options = {}) {
-    const response = await fetch(`https://api.github.com/repos/${repo}${path}`, {
-      ...options,
-      headers: headers(options.headers || {})
-    });
-    if (response.status === 204) return null;
-    let data = null;
-    try { data = await response.json(); } catch {}
-    if (!response.ok) throw new Error(data?.message || `GitHub API ${response.status}`);
-    return data;
+    let lastError = null;
+    for (let attempt = 1; attempt <= REQUEST_RETRIES; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        const response = await fetch(`https://api.github.com/repos/${repo}${path}`, {
+          ...options,
+          headers: headers(options.headers || {}),
+          signal: controller.signal
+        });
+        clearTimeout(timeout);
+        if (response.status === 204) return null;
+
+        let data = null;
+        try { data = await response.json(); } catch {}
+
+        if (response.ok) return data;
+        const message = data?.message || `GitHub API ${response.status}`;
+        const transient = response.status === 408 || response.status === 429 || response.status >= 500;
+        if (!transient || attempt === REQUEST_RETRIES) throw new Error(message);
+        lastError = new Error(message);
+      } catch (error) {
+        clearTimeout(timeout);
+        const normalized = error?.name === 'AbortError'
+          ? new Error(`GitHub request timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`)
+          : error;
+        lastError = normalized;
+        if (attempt === REQUEST_RETRIES) throw normalized;
+      }
+      await sleep(700 * attempt);
+    }
+    throw lastError || new Error('GitHub request failed.');
   }
 
   function openWorkspaceDb() {
@@ -68,6 +93,22 @@
     }
   }
 
+  function base64Bytes(base64) {
+    const clean = String(base64 || '').replace(/\s/g, '');
+    const binary = atob(clean);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  function contentBytes(content) {
+    if (typeof content === 'string') {
+      const match = content.match(/^data:[^;,]*;base64,([A-Za-z0-9+/=\s]+)$/);
+      if (match) return base64Bytes(match[1]);
+    }
+    return new TextEncoder().encode(content == null ? '' : String(content));
+  }
+
   function dataForBlob(content) {
     if (typeof content === 'string') {
       const match = content.match(/^data:[^;,]*;base64,([A-Za-z0-9+/=\s]+)$/);
@@ -76,7 +117,17 @@
     return { content: content == null ? '' : String(content), encoding: 'utf-8' };
   }
 
+  async function gitBlobSha(bytes) {
+    const header = new TextEncoder().encode(`blob ${bytes.length}\0`);
+    const payload = new Uint8Array(header.length + bytes.length);
+    payload.set(header, 0);
+    payload.set(bytes, header.length);
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-1', payload));
+    return Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
   async function mapLimit(entries, limit, worker) {
+    if (!entries.length) return [];
     const out = new Array(entries.length);
     let next = 0;
     async function lane() {
@@ -94,6 +145,13 @@
     if (remoteMode === '100755' || remoteMode === '120000') return remoteMode;
     if (/\.sh$/i.test(path) && String(content || '').startsWith('#!')) return '100755';
     return '100644';
+  }
+
+  function formatBytes(value) {
+    const bytes = Number(value) || 0;
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   function buildClientId() {
@@ -133,8 +191,8 @@
           <p style="font-size:.82rem;color:#aeb7c6;margin-top:0">Local workspace → private Vortex3D source commit → public VTXBuilder verification → private release → local download. Vortex3D Actions stay disabled.</p>
           <pre id="vortexBuildLog" style="white-space:pre-wrap;max-height:48vh;overflow:auto;background:#0d1117;padding:12px;border-radius:8px;font-size:.78rem"></pre>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-            <button class="btn btn-success hidden" id="vortexDownloadVerification" type="button">⬇️ Verification ZIP</button>
-            <button class="btn btn-secondary hidden" id="vortexDownloadUniversal" type="button">⬇️ Universal APK</button>
+            <button class="btn btn-success" style="display:none" id="vortexDownloadVerification" type="button">⬇️ Verification ZIP</button>
+            <button class="btn btn-secondary" style="display:none" id="vortexDownloadUniversal" type="button">⬇️ Universal APK</button>
             <button class="btn btn-secondary" id="vortexBuildCloseBtn" type="button">Close</button>
           </div>
         </div>`;
@@ -159,10 +217,15 @@
     $('vortexBuildModal')?.classList.remove('hidden');
   }
 
+  function setDownloadVisible(id, visible) {
+    const element = $(id);
+    if (element) element.style.display = visible ? 'inline-flex' : 'none';
+  }
+
   function clearDownloads() {
     lastSuccess = null;
-    $('vortexDownloadVerification')?.classList.add('hidden');
-    $('vortexDownloadUniversal')?.classList.add('hidden');
+    setDownloadVisible('vortexDownloadVerification', false);
+    setDownloadVisible('vortexDownloadUniversal', false);
   }
 
   function logger() {
@@ -170,7 +233,7 @@
     const lines = [];
     return text => {
       lines.push(String(text));
-      while (lines.length > 120) lines.shift();
+      while (lines.length > 160) lines.shift();
       if (box) {
         box.textContent = lines.join('\n');
         box.scrollTop = box.scrollHeight;
@@ -189,7 +252,9 @@
     }
 
     const allFiles = await workspaceFiles();
-    const files = allFiles.filter(file => file?.name && !String(file.name).startsWith('.github/workflows/'));
+    const files = allFiles
+      .filter(file => file?.name && !String(file.name).startsWith('.github/workflows/'))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
     if (!files.length) throw new Error('The local workspace is empty. Pull Vortex3D into the Editor first.');
 
     log(`Reading ${files.length} local source files…`);
@@ -210,29 +275,60 @@
 
     const remoteByPath = new Map(remoteBlobs.map(item => [item.path, item]));
     const localPaths = new Set(files.map(file => String(file.name)));
+    let prepared = 0;
     let uploaded = 0;
-    const tree = await mapLimit(files, 6, async file => {
+    let reused = 0;
+
+    log('Comparing local files with GitHub; unchanged blobs will not be uploaded…');
+    const preparedEdits = await mapLimit(files, UPLOAD_CONCURRENCY, async file => {
       const path = String(file.name);
-      const payload = dataForBlob(file.content);
-      const blob = await gh(VORTEX_REPO, '/git/blobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      const remoteItem = remoteByPath.get(path);
+      const mode = safeMode(path, file.content, remoteItem?.mode);
+      const bytes = contentBytes(file.content);
+      const localSha = await gitBlobSha(bytes);
+
+      prepared += 1;
+      if (remoteItem?.sha === localSha && remoteItem?.mode === mode) {
+        reused += 1;
+        if (prepared % 25 === 0 || prepared === files.length) {
+          log(`Compared ${prepared}/${files.length} · ${reused} unchanged · ${uploaded} uploaded`);
+        }
+        return null;
+      }
+
+      log(`Uploading change: ${path} (${formatBytes(bytes.length)})`);
+      let blob;
+      try {
+        blob = await gh(VORTEX_REPO, '/git/blobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(dataForBlob(file.content))
+        });
+      } catch (error) {
+        throw new Error(`Upload failed for ${path}: ${error?.message || error}`);
+      }
       uploaded += 1;
-      if (uploaded % 20 === 0 || uploaded === files.length) log(`Uploaded ${uploaded}/${files.length} source blobs…`);
-      return {
-        path,
-        mode: safeMode(path, file.content, remoteByPath.get(path)?.mode),
-        type: 'blob',
-        sha: blob.sha
-      };
+      log(`Uploaded ${uploaded} changed blob${uploaded === 1 ? '' : 's'}: ${path}`);
+      if (prepared % 25 === 0 || prepared === files.length) {
+        log(`Compared ${prepared}/${files.length} · ${reused} unchanged · ${uploaded} uploaded`);
+      }
+      return { path, mode, type: 'blob', sha: blob.sha };
     });
 
+    const tree = preparedEdits.filter(Boolean);
+    let deletions = 0;
     for (const item of remoteBlobs) {
       if (item.path.startsWith('.github/workflows/') || !localPaths.has(item.path)) {
         tree.push({ path: item.path, mode: item.mode || '100644', type: 'blob', sha: null });
+        deletions += 1;
       }
+    }
+
+    log(`Source diff ready: ${uploaded} upload(s), ${deletions} deletion(s), ${reused} unchanged.`);
+    if (!tree.length) {
+      log(`Workspace already matches private Vortex3D ${baseSha.slice(0, 12)}; no source upload/commit needed.`);
+      log('Vortex3D Actions triggered: 0');
+      return baseSha;
     }
 
     const nextTree = await gh(VORTEX_REPO, '/git/trees', {
@@ -331,8 +427,8 @@
     if (!verification) throw new Error('Worker succeeded but the verification ZIP is missing from the private release.');
 
     lastSuccess = { release, verification, universal };
-    $('vortexDownloadVerification')?.classList.remove('hidden');
-    if (universal) $('vortexDownloadUniversal')?.classList.remove('hidden');
+    setDownloadVisible('vortexDownloadVerification', true);
+    setDownloadVisible('vortexDownloadUniversal', Boolean(universal));
     log('GREEN: full VTXBuilder verification passed.');
     log(`Private release: ${release.name || release.tag_name}`);
     log('Downloading verification ZIP back to this device…');
@@ -347,7 +443,7 @@
     if (!token()) return alert('Connect your GitHub token first.');
     const branch = selectedBranch();
     if (!branch) return alert('Choose a Vortex3D branch first.');
-    if (!confirm(`Push the COMPLETE local Vortex3D workspace to ${branch}, run the full VTXBuilder verification, and download the private result ZIP back to this device?\n\nNo Vortex3D GitHub Action will run.`)) return;
+    if (!confirm(`Sync the COMPLETE local Vortex3D workspace to ${branch}, run the full VTXBuilder verification, and download the private result ZIP back to this device?\n\nOnly changed source blobs are uploaded. No Vortex3D GitHub Action will run.`)) return;
 
     activeBuild = true;
     clearDownloads();
