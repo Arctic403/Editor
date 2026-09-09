@@ -19,6 +19,25 @@
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   let activeBuild = false;
   let lastSuccess = null;
+  const BUILD_STATE_KEY = 'vortex3d_remote_build_state_v1';
+
+  function saveBuildState() {
+    if (!lastSuccess) return;
+    try {
+      localStorage.setItem(BUILD_STATE_KEY, JSON.stringify(lastSuccess));
+    } catch {}
+  }
+
+  function restoreBuildState() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(BUILD_STATE_KEY) || 'null');
+      if (saved?.verification) {
+        lastSuccess = saved;
+        return true;
+      }
+    } catch {}
+    return false;
+  }
 
   const token = () => $('tokenInput')?.value?.trim() || '';
   const selectedRepo = () => $('repoSelect')?.value || '';
@@ -222,10 +241,19 @@
     if (element) element.style.display = visible ? 'inline-flex' : 'none';
   }
 
-  function clearDownloads() {
-    lastSuccess = null;
+  function clearDownloads(force = false) {
+    if (force) {
+      lastSuccess = null;
+      try { localStorage.removeItem(BUILD_STATE_KEY); } catch {}
+    }
     setDownloadVisible('vortexDownloadVerification', false);
     setDownloadVisible('vortexDownloadUniversal', false);
+  }
+
+  function restoreDownloads() {
+    if (!lastSuccess) return;
+    setDownloadVisible('vortexDownloadVerification', Boolean(lastSuccess.verification));
+    setDownloadVisible('vortexDownloadUniversal', Boolean(lastSuccess.universal));
   }
 
   function logger() {
@@ -427,6 +455,7 @@
     if (!verification) throw new Error('Worker succeeded but the verification ZIP is missing from the private release.');
 
     lastSuccess = { release, verification, universal };
+    saveBuildState();
     setDownloadVisible('vortexDownloadVerification', true);
     setDownloadVisible('vortexDownloadUniversal', Boolean(universal));
     log('GREEN: full VTXBuilder verification passed.');
@@ -446,7 +475,7 @@
     if (!confirm(`Sync the COMPLETE local Vortex3D workspace to ${branch}, run the full VTXBuilder verification, and download the private result ZIP back to this device?\n\nOnly changed source blobs are uploaded. No Vortex3D GitHub Action will run.`)) return;
 
     activeBuild = true;
-    clearDownloads();
+    clearDownloads(true);
     showModal();
     const button = $('vortexRemoteBuildBtn');
     if (button) { button.disabled = true; button.textContent = '🛠 Building…'; }
@@ -488,7 +517,9 @@
   }
 
   function boot() {
+    restoreBuildState();
     ensureUi();
+    restoreDownloads();
     updateVisibility();
     $('repoSelect')?.addEventListener('change', updateVisibility);
     guardDirectWorkflowPushes();
