@@ -119,13 +119,35 @@
                         <button class="btn btn-sm btn-secondary" id="splitPaneBtn">▥ Split</button>
                         <button class="btn btn-sm btn-secondary" id="jumpLineBtn">⚓ Jump L#</button>
                         <button class="btn btn-sm btn-secondary" id="searchToggleBtn">🔍 Find/Replace</button>
-                        <button class="btn btn-sm btn-warning" id="replaceBtn">Replace</button>
-                        <button class="btn btn-sm btn-warning" id="replaceAllBtn">All</button>
+                        <button class="btn btn-sm btn-success" id="saveLocalBtn">💾 Save</button>
+                        <button class="btn btn-sm btn-secondary" id="pushGitHubBtn">☁️ Push</button>
+                        <button class="btn btn-sm btn-secondary" id="fullscreenBtn">⛶ Fullscreen</button>
+                        <button class="btn btn-sm btn-danger" id="closeFileBtn">✕</button>
                     </div>
+                </div>
+
+                <!-- Breadcrumb Directory Path Bar -->
+                <div class="breadcrumb-bar" id="breadcrumbBar">
+                    <span class="breadcrumb-item">workspace</span>
+                </div>
+
+                <!-- Region Code Navigation Bar -->
+                <div class="block-navigation-bar" id="blockNav">
+                    <span class="no-blocks">No defined #region blocks</span>
+                </div>
+
+                <!-- Search and Replace Control Bar -->
+                <div class="search-bar hidden" id="searchReplaceBar">
+                    <input type="text" id="searchInput" placeholder="Find text...">
+                    <input type="text" id="replaceInput" placeholder="Replace with...">
+                    <button class="btn btn-sm btn-secondary" id="findNextBtn">Find Next</button>
+                    <button class="btn btn-sm btn-warning" id="replaceBtn">Replace</button>
+                    <button class="btn btn-sm btn-warning" id="replaceAllBtn">All</button>
                 </div>
 
                 <!-- Dual Pane Workspace Container -->
                 <div class="workspace-panes" id="workspacePanes">
+                    <!-- Pane 1 (Primary Editor) -->
                     <div class="editor-workspace pane-primary">
                         <div class="line-numbers" id="lineNumbers">1</div>
                         <div class="editor-wrapper">
@@ -133,6 +155,8 @@
                             <textarea id="editor" class="editor-textarea" spellcheck="false" autocomplete="off" placeholder="Select or create a file to start editing..."></textarea>
                         </div>
                     </div>
+
+                    <!-- Pane 2 (Secondary Split Editor - Initially Hidden) -->
                     <div class="editor-workspace pane-secondary hidden" id="secondaryPane">
                         <div class="pane-header">
                             <span id="secondaryPaneTitle">Secondary View</span>
@@ -145,11 +169,13 @@
                     </div>
                 </div>
 
+                <!-- Mobile Programming Symbol Key Bar -->
                 <div class="accessory-keyboard-bar" id="symbolBar"></div>
             </section>
         </main>
     </div>
 
+    <!-- Quick File Search Modal (Ctrl/Cmd + P) -->
     <div class="modal-overlay hidden" id="quickOpenModal">
         <div class="modal-content">
             <div class="modal-header">
